@@ -2,5 +2,6 @@ using System.Reflection;
 
 [assembly: AssemblyTitle("Lazo")]
 [assembly: AssemblyProduct("Lazo")]
-[assembly: AssemblyVersion("0.3.0.0")]
-[assembly: AssemblyFileVersion("0.3.0.0")]
+[assembly: AssemblyCompany("Jhon Andrew")]
+[assembly: AssemblyVersion("0.4.7.0")]
+[assembly: AssemblyFileVersion("0.4.7.0")]

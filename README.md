@@ -1,19 +1,23 @@
 # Lazo
 
-Aplicación para enviar archivos directamente entre equipos Windows 10 y 11 de una misma subred privada. Funciona en segundo plano desde la bandeja y se abre con **doble Alt izquierdo** o **Ctrl+Alt+L**. La ventana se centra en la pantalla donde está el cursor; la alerta de recepción hace lo mismo en el equipo destinatario.
+Aplicación para enviar archivos directamente entre equipos Windows 10 y 11 de una misma subred privada. Funciona en segundo plano desde la bandeja y se abre con **doble Alt izquierdo** o **Ctrl+Alt+L**. La ventana emerge desde la base de la pantalla donde está el cursor al abrir y queda centrada horizontalmente. La alerta de recepción aparece abajo a la derecha, sin robar el foco, y muestra un previo si el archivo es una imagen. Al terminar, ofrece **Mostrar en carpeta** y **Abrir**, y permanece visible hasta elegir una opción o cerrar.
 
-| Minimal (predeterminado) | Vidrio |
-| --- | --- |
-| ![Tema Minimal](docs/minimal-preview.png) | ![Tema Vidrio](docs/vidrio.png) |
+Tu ícono aparece en la cabecera de Minimal y Standard y abre tu perfil al pulsarlo. La foto se muestra ampliada en Ajustes y se actualiza inmediatamente al cambiarla. El engranaje de la esquina superior derecha abre los ajustes y guarda la elección. El panel permanece abierto mientras se cambian las opciones. La ventana se arrastra; Escape o un clic fuera la cierra. El nombre que ven los demás es el del usuario, y se puede cambiar en ajustes. Ahí también se elige si Lazo abre con Windows y se cambia o quita la foto de perfil. La imagen se recorta al centro, se reduce a 96 × 96 píxeles en escala de grises y se comparte con los equipos de la subred; sin foto se muestran las iniciales. El acercamiento del cursor al borde de la pantalla ya no abre ninguna ventana.
 
-El botón de la esquina superior derecha cambia de tema y guarda la elección. Minimal tiene una sola barra de búsqueda y filas de archivos; los círculos con iniciales representan equipos disponibles. Vidrio usa la misma disposición con superficies translúcidas.
+- **Minimal**: al abrir solo se ve la barra de búsqueda, con círculos de iniciales encima para los equipos conectados. No hay textos. Al escribir, la ventana se expande y muestra resultados; las iniciales de cada fila envían el archivo.
+- **Standard**: al abrir se ven los equipos como íconos grandes, en una ventana ajustada a cuántos hay. Al pulsar uno se abre el diálogo para elegir el archivo. También se puede arrastrar un archivo desde el Explorador hasta el ícono: el envío empieza al soltarlo.
+- **Apariencia**: Plano, Vidrio u Oscuro, en el mismo panel.
+
+La interfaz usa Bahnschrift con respaldo en Segoe UI. El contenido se recorta siguiendo las esquinas redondeadas del recuadro; al abrir, una silueta líquida asciende desde la base y se transforma en la ventana. Los ajustes usan controles de selección en forma de pastilla. La sombra de la ventana se eliminó para evitar un parche rectangular translúcido en las esquinas.
+
+![Lazo Minimal compacto](docs/interfaz-colapsada.png)
 
 ## Instalar y compartir
 
-Comparte **`dist/Lazo-Setup-0.3.0.exe`**. Es un solo archivo: contiene Lazo, crea accesos directos, registra la desinstalación en Configuración de Windows y configura dos reglas entrantes limitadas al perfil **Privado** y a la **subred local**. Solicita permisos de administrador. Puede iniciar con Windows si se deja marcada la opción del instalador.
+Comparte **`dist/Lazo-Setup-0.4.7.exe`**. Es un solo archivo: contiene Lazo, crea accesos directos, registra la desinstalación en Configuración de Windows y configura dos reglas entrantes limitadas al perfil **Privado** y a la **subred local**. Solicita permisos de administrador. Puede iniciar con Windows si se deja marcada la opción del instalador.
 
 1. Cierra cualquier copia anterior de Lazo desde el icono de la bandeja.
-2. Ejecuta `Lazo-Setup-0.3.0.exe` y acepta el aviso de Windows.
+2. Ejecuta `Lazo-Setup-0.4.7.exe` y acepta el aviso de Windows.
 3. Abre Lazo desde el menú Inicio. Repite la instalación en el otro equipo.
 4. Asegúrate de que ambos equipos estén en una red marcada como **Privada** en Windows.
 
@@ -24,9 +28,9 @@ También puede generarse un paquete portable con `scripts/package.ps1`, pero el 
 ## Usar
 
 1. Abre la ventana con doble Alt izquierdo o `Ctrl+Alt+L`.
-2. Escribe parte del nombre del archivo. Lazo consulta el índice local de [Everything](https://www.voidtools.com/support/everything/sdk/ipc/), si está abierto en ese equipo. Muestra hasta 24 archivos por búsqueda. También puedes arrastrar un archivo o usar **Elegir archivo** (`Ctrl+O`), incluso sin Everything.
-3. Pulsa las iniciales del destinatario junto al archivo. **Ese clic inicia el envío inmediatamente**. Al pasar el cursor se muestra el nombre completo del equipo.
-4. En el receptor aparece una ventana sobre las demás para aceptar o rechazar. La solicitud caduca tras 90 segundos.
+2. En Minimal, escribe parte del nombre. Lazo consulta el índice local de [Everything](https://www.voidtools.com/support/everything/sdk/ipc/), si está abierto en ese equipo. Muestra hasta 24 archivos por búsqueda. También puedes arrastrar un archivo o usar `Ctrl+O`, incluso sin Everything. En Standard, pulsa el equipo para abrir el diálogo de archivo, o arrastra el archivo desde el Explorador hasta su ícono.
+3. En Minimal, pulsa las iniciales del destinatario junto al archivo. En Standard, el archivo elegido o soltado se envía a ese equipo. **Esa acción inicia el envío inmediatamente**.
+4. En el receptor aparece una alerta abajo a la derecha para aceptar o rechazar. Si el archivo es una imagen, incluye un previo. La solicitud caduca tras 90 segundos.
 5. El archivo aceptado se guarda en `Descargas\Lazo`. Se verifica con SHA-256 antes de conservarlo; la alerta se repliega al terminar.
 
 Cerrar la ventana principal la oculta en la bandeja. **Salir** en el menú de la bandeja detiene Lazo.

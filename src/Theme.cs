@@ -4,38 +4,74 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
-using System.Windows.Media.Effects;
 
 namespace Lazo
 {
-    internal enum ThemeKind { Raycast, Glass }
+    internal enum ThemeKind { Raycast, Glass, Dark }
+    internal enum InterfaceKind { Minimal, Standard }
 
     internal static class Theme
     {
         public static ThemeKind Mode { get; private set; }
+        public static InterfaceKind Interface { get; private set; }
         public static bool IsGlass { get { return Mode == ThemeKind.Glass; } }
+        public static bool IsDark { get { return Mode == ThemeKind.Dark; } }
+        public static bool IsMinimal { get { return Interface == InterfaceKind.Minimal; } }
         public static readonly FontFamily Mono = new FontFamily("Cascadia Code, Consolas");
-        private static readonly FontFamily Sans = new FontFamily("Segoe UI");
+        private static readonly FontFamily Sans = new FontFamily("Bahnschrift, Segoe UI");
 
         public static void Load()
         {
-            try { Mode = File.ReadAllText(SettingsPath()).Trim() == "glass" ? ThemeKind.Glass : ThemeKind.Raycast; }
+            try { Mode = ParseTheme(File.ReadAllText(SettingsPath())); }
             catch { Mode = ThemeKind.Raycast; }
+            try { Interface = File.ReadAllText(InterfacePath()).Trim() == "standard" ? InterfaceKind.Standard : InterfaceKind.Minimal; }
+            catch { Interface = InterfaceKind.Minimal; }
         }
 
         public static void SetForPreview(ThemeKind mode) { Mode = mode; }
 
-        public static void Toggle(bool persist)
+        public static void SetInterface(InterfaceKind kind, bool persist)
         {
-            Mode = IsGlass ? ThemeKind.Raycast : ThemeKind.Glass;
+            Interface = kind;
+            if (!persist) return;
+            try
+            {
+                string path = InterfacePath();
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                File.WriteAllText(path, kind == InterfaceKind.Standard ? "standard" : "minimal");
+            }
+            catch { }
+        }
+
+        public static void SetAppearance(ThemeKind kind, bool persist)
+        {
+            Mode = kind;
             if (!persist) return;
             try
             {
                 string path = SettingsPath();
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
-                File.WriteAllText(path, IsGlass ? "glass" : "raycast");
+                File.WriteAllText(path, kind == ThemeKind.Glass ? "glass" : kind == ThemeKind.Dark ? "dark" : "raycast");
             }
-            catch { /* The chosen theme still works for this session. */ }
+            catch { }
+        }
+
+        public static void SetGlass(bool glass, bool persist)
+        {
+            SetAppearance(glass ? ThemeKind.Glass : ThemeKind.Raycast, persist);
+        }
+
+        public static void Toggle(bool persist)
+        {
+            SetGlass(!IsGlass, persist);
+        }
+
+        private static ThemeKind ParseTheme(string value)
+        {
+            value = value.Trim();
+            if (value == "glass") return ThemeKind.Glass;
+            if (value == "dark") return ThemeKind.Dark;
+            return ThemeKind.Raycast;
         }
 
         private static string SettingsPath()
@@ -43,25 +79,37 @@ namespace Lazo
             return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Lazo", "theme.txt");
         }
 
+        private static string InterfacePath()
+        {
+            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Lazo", "interface.txt");
+        }
+
         public static Brush Color(string hex)
         {
             return new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
         }
 
-        public static Brush Ink { get { return Color("#242424"); } }
-        public static Brush Muted { get { return Color(IsGlass ? "#646464" : "#777777"); } }
-        public static Brush Line { get { return Color(IsGlass ? "#BFFFFFFF" : "#D3D3D3"); } }
-        public static Brush CardSurface { get { return Color(IsGlass ? "#B8FFFFFF" : "#F4F4F4"); } }
-        public static Brush SoftSurface { get { return Color(IsGlass ? "#80FFFFFF" : "#DEDEDE"); } }
-        public static Brush AvatarSurface { get { return Color(IsGlass ? "#B0FFFFFF" : "#ECECEC"); } }
-        public static Brush AvatarHover { get { return Color(IsGlass ? "#E5FFFFFF" : "#CECECE"); } }
-        public static Brush Primary { get { return Color(IsGlass ? "#252525" : "#F2F2F2"); } }
-        public static Brush PrimaryText { get { return Color(IsGlass ? "#FFFFFF" : "#19191B"); } }
+        public static Brush Ink { get { return Color(IsDark ? "#E6E6E6" : "#242424"); } }
+        public static Brush Muted { get { return Color(IsDark ? "#8E8E8E" : IsGlass ? "#646464" : "#777777"); } }
+        public static Brush Line { get { return Color(IsDark ? "#3A3A3A" : IsGlass ? "#BFFFFFFF" : "#D3D3D3"); } }
+        public static Brush CardSurface { get { return Color(IsDark ? "#242424" : IsGlass ? "#B8FFFFFF" : "#F4F4F4"); } }
+        public static Brush SoftSurface { get { return Color(IsDark ? "#2E2E2E" : IsGlass ? "#80FFFFFF" : "#DEDEDE"); } }
+        public static Brush AvatarSurface { get { return Color(IsDark ? "#2A2A2A" : IsGlass ? "#B0FFFFFF" : "#ECECEC"); } }
+        public static Brush AvatarHover { get { return Color(IsDark ? "#3C3C3C" : IsGlass ? "#E5FFFFFF" : "#CECECE"); } }
+        public static Brush Primary { get { return Color(IsDark ? "#E6E6E6" : IsGlass ? "#252525" : "#F2F2F2"); } }
+        public static Brush PrimaryText { get { return Color(IsDark ? "#161616" : IsGlass ? "#FFFFFF" : "#19191B"); } }
+        public static Brush SelectionFill { get { return Color(IsDark ? "#E6E6E6" : "#242424"); } }
+        public static Brush SelectionText { get { return IsDark ? Color("#161616") : Brushes.White; } }
+        public static Brush SegmentTrack { get { return Color(IsDark ? "#292929" : IsGlass ? "#B8FFFFFF" : "#EAEAEA"); } }
+        public static Brush SegmentActive { get { return Color(IsDark ? "#F0F0F0" : "#FFFFFF"); } }
+        public static Brush SegmentActiveText { get { return Color("#1B1B1B"); } }
+        public static Brush SegmentMutedText { get { return Color(IsDark ? "#AAAAAA" : "#959595"); } }
         public static FontFamily Font { get { return Sans; } }
         public static CornerRadius Radius { get { return new CornerRadius(IsGlass ? 20 : 10); } }
 
         public static Brush ShellSurface()
         {
+            if (IsDark) return Color("#171717");
             if (!IsGlass) return Color("#F1F1F1");
             LinearGradientBrush gradient = new LinearGradientBrush();
             gradient.StartPoint = new Point(0, 0);
@@ -119,46 +167,11 @@ namespace Lazo
                 BorderThickness = new Thickness(1), CornerRadius = Radius, Padding = padding, Child = child };
         }
 
-        public static DropShadowEffect Shadow()
-        {
-            return new DropShadowEffect { Color = Colors.Black, BlurRadius = IsGlass ? 44 : 32,
-                ShadowDepth = IsGlass ? 17 : 12, Opacity = IsGlass ? 0.20 : 0.38, Direction = 270 };
-        }
-
         public static DoubleAnimation Animation(double from, double to, int milliseconds)
         {
             return new DoubleAnimation(from, to, TimeSpan.FromMilliseconds(milliseconds))
             { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }, FillBehavior = FillBehavior.HoldEnd };
         }
 
-        public static void Enter(FrameworkElement element)
-        {
-            element.RenderTransformOrigin = new Point(0.5, 0.5);
-            TransformGroup group = new TransformGroup();
-            ScaleTransform scale = new ScaleTransform(IsGlass ? 0.90 : 0.96, IsGlass ? 0.90 : 0.96);
-            TranslateTransform translate = new TranslateTransform(0, IsGlass ? 28 : 12);
-            group.Children.Add(scale);
-            group.Children.Add(translate);
-            element.RenderTransform = group;
-            element.Opacity = 0;
-            element.BeginAnimation(UIElement.OpacityProperty, Animation(0, 1, IsGlass ? 340 : 190));
-            scale.BeginAnimation(ScaleTransform.ScaleXProperty, Animation(scale.ScaleX, 1, IsGlass ? 420 : 260));
-            scale.BeginAnimation(ScaleTransform.ScaleYProperty, Animation(scale.ScaleY, 1, IsGlass ? 420 : 260));
-            translate.BeginAnimation(TranslateTransform.YProperty, Animation(translate.Y, 0, IsGlass ? 420 : 260));
-        }
-
-        public static void Leave(FrameworkElement element, Action completed)
-        {
-            TransformGroup group = element.RenderTransform as TransformGroup;
-            if (group == null) { completed(); return; }
-            ScaleTransform scale = (ScaleTransform)group.Children[0];
-            TranslateTransform translate = (TranslateTransform)group.Children[1];
-            DoubleAnimation fade = Animation(1, 0, IsGlass ? 270 : 170);
-            fade.Completed += (s, e) => completed();
-            element.BeginAnimation(UIElement.OpacityProperty, fade);
-            scale.BeginAnimation(ScaleTransform.ScaleXProperty, Animation(1, IsGlass ? 0.72 : 0.89, IsGlass ? 290 : 180));
-            scale.BeginAnimation(ScaleTransform.ScaleYProperty, Animation(1, IsGlass ? 0.72 : 0.89, IsGlass ? 290 : 180));
-            translate.BeginAnimation(TranslateTransform.YProperty, Animation(0, IsGlass ? -40 : -16, IsGlass ? 290 : 180));
-        }
     }
 }

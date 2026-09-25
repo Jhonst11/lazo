@@ -37,16 +37,14 @@ $rectangle = [LazoCapture+Rect]::new()
 [LazoCapture]::GetWindowRect($script:window, [ref]$rectangle) | Out-Null
 if ($CheckPlacement) {
     Add-Type -AssemblyName System.Windows.Forms
-    $area = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position).WorkingArea
+    $area = [System.Windows.Forms.Screen]::FromPoint([System.Drawing.Point]::new([int](($rectangle.Left + $rectangle.Right) / 2), [int](($rectangle.Top + $rectangle.Bottom) / 2))).WorkingArea
     $windowCenterX = ($rectangle.Left + $rectangle.Right) / 2
-    $windowCenterY = ($rectangle.Top + $rectangle.Bottom) / 2
     $areaCenterX = ($area.Left + $area.Right) / 2
-    $areaCenterY = ($area.Top + $area.Bottom) / 2
     if ([math]::Abs($windowCenterX - $areaCenterX) -gt 8 -or
-        [math]::Abs($windowCenterY - $areaCenterY) -gt 8) {
-        throw "La ventana no está centrada en el monitor del cursor: ($windowCenterX, $windowCenterY) vs ($areaCenterX, $areaCenterY)."
+        [math]::Abs($rectangle.Bottom - ($area.Bottom - 4)) -gt 8) {
+        throw "La ventana no está en la base central de la pantalla del launcher."
     }
-    Write-Host "Posición: monitor del cursor centrado ($($area.Width)x$($area.Height))."
+    Write-Host "Posición: base central de la pantalla del launcher ($($area.Width)x$($area.Height))."
 }
 $bitmap = [System.Drawing.Bitmap]::new($rectangle.Right-$rectangle.Left, $rectangle.Bottom-$rectangle.Top)
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)

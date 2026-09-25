@@ -17,6 +17,7 @@ namespace Lazo
     {
         public Guid Id;
         public string Name;
+        public string Photo = "";
         public IPAddress Address;
         public int Port;
         public DateTime SeenUtc;
@@ -30,6 +31,7 @@ namespace Lazo
         public IPAddress Address;
         public string FileName;
         public long Size;
+        public byte[] Preview;
     }
 
     internal sealed class NetworkEngine : IDisposable
@@ -52,7 +54,7 @@ namespace Lazo
         public event Action<List<Peer>> PeersChanged;
         public event Func<Offer, Task<bool>> OfferReceived;
         public event Action<Guid, double> ReceiveProgress;
-        public event Action<Guid, string> ReceiveFinished;
+        public event Action<Guid, string, string> ReceiveFinished;
 
         public NetworkEngine(string receiveDirectory = null, int discoveryPort = DiscoveryPort, int transferPort = TransferPort)
         {
@@ -92,11 +94,25 @@ namespace Lazo
                 {
                     IPEndPoint remote = new IPEndPoint(IPAddress.Any, 0);
                     byte[] data = _udp.Receive(ref remote);
-                    if (data.Length > 512 || !IsLocalSubnet(remote.Address)) continue;
+                    if (data.Length > 16500 || !IsLocalSubnet(remote.Address)) continue;
                     string[] fields = Encoding.UTF8.GetString(data).Split('|');
                     Guid id;
                     int port;
-                    if (fields.Length != 4 || fields[0] != "LAZO1" ||
+                    if (fields.Length == 3 && fields[0] == "LAZOA" && Guid.TryParse(fields[1], out id))
+                    {
+                        if (fields[2].Length > 16000) continue;
+                        lock (_peerLock)
+                        {
+                            Peer peer;
+                            if (_peers.TryGetValue(id, out peer) && peer.Address.Equals(remote.Address) && peer.Photo != fields[2])
+                            {
+                                peer.Photo = fields[2];
+                                PublishPeers();
+                            }
+                        }
+                        continue;
+                    }
+                    if (data.Length > 512 || fields.Length != 4 || fields[0] != "LAZO1" ||
                         !Guid.TryParse(fields[1], out id) || id == _id ||
                         !int.TryParse(fields[3], out port) || port != _transferPort) continue;
                     string name = CleanLabel(fields[2]);
@@ -106,7 +122,7 @@ namespace Lazo
                         Peer previous;
                         bool changed = !_peers.TryGetValue(id, out previous) || previous.Name != name ||
                                        !previous.Address.Equals(remote.Address) || previous.Port != port;
-                        _peers[id] = new Peer { Id = id, Name = name, Address = remote.Address, Port = port, SeenUtc = DateTime.UtcNow };
+                        _peers[id] = new Peer { Id = id, Name = name, Address = remote.Address, Port = port, SeenUtc = DateTime.UtcNow, Photo = previous == null ? "" : previous.Photo };
                         if (changed) PublishPeers();
                     }
                 }
@@ -118,13 +134,17 @@ namespace Lazo
 
         private void BroadcastLoop()
         {
-            byte[] payload = Encoding.UTF8.GetBytes("LAZO1|" + _id + "|" + CleanLabel(Environment.MachineName) + "|" + _transferPort);
             while (_running)
             {
                 try
                 {
+                    byte[] payload = Encoding.UTF8.GetBytes("LAZO1|" + _id + "|" + Label() + "|" + _transferPort);
+                    byte[] photo = Encoding.UTF8.GetBytes("LAZOA|" + _id + "|" + ProfilePhoto.Current);
                     foreach (IPAddress address in BroadcastAddresses())
+                    {
                         _udp.Send(payload, payload.Length, new IPEndPoint(address, _discoveryPort));
+                        _udp.Send(photo, photo.Length, new IPEndPoint(address, _discoveryPort));
+                    }
                     lock (_peerLock)
                     {
                         Guid[] stale = _peers.Where(p => (DateTime.UtcNow - p.Value.SeenUtc).TotalSeconds > 9)
@@ -226,18 +246,27 @@ namespace Lazo
                     using (BinaryWriter writer = new BinaryWriter(stream, Encoding.UTF8, true))
                     {
                         byte[] magic = reader.ReadBytes(5);
-                        if (Encoding.ASCII.GetString(magic) != "LAZO1") return;
+                        string magicText = Encoding.ASCII.GetString(magic);
+                        if (magicText != "LAZO2")
+                        {
+                            if (magicText == "LAZO1") { writer.Write((byte)0); writer.Flush(); }
+                            return;
+                        }
                         string sender = CleanLabel(ReadText(reader, 80));
                         string name = SafeFileName(ReadText(reader, 255));
                         long size = reader.ReadInt64();
-                        if (sender.Length == 0 || name.Length == 0 || size < 0 || size > MaxFileSize) return;
+                        int previewLength = reader.ReadInt32();
+                        if (sender.Length == 0 || name.Length == 0 || size < 0 || size > MaxFileSize ||
+                            previewLength < 0 || previewLength > 48000) return;
+                        byte[] preview = previewLength == 0 ? null : reader.ReadBytes(previewLength);
+                        if (preview != null && preview.Length != previewLength) return;
                         offerId = Guid.NewGuid();
                         if (Interlocked.CompareExchange(ref _receiving, 1, 0) != 0)
                         {
                             writer.Write((byte)0); writer.Flush(); return;
                         }
                         ownsReceive = true;
-                        Offer offer = new Offer { Id = offerId, Sender = sender, Address = address, FileName = name, Size = size };
+                        Offer offer = new Offer { Id = offerId, Sender = sender, Address = address, FileName = name, Size = size, Preview = preview };
                         Func<Offer, Task<bool>> handler = OfferReceived;
                         bool allow = handler != null && await handler(offer);
                         if (!allow) { writer.Write((byte)0); writer.Flush(); return; }
@@ -272,8 +301,8 @@ namespace Lazo
                         File.Move(temp, destination);
                         temp = null;
                         writer.Write((byte)1); writer.Flush();
-                        Action<Guid, string> finished = ReceiveFinished;
-                        if (finished != null) finished(offerId, "Guardado en Descargas\\Lazo");
+                        Action<Guid, string, string> finished = ReceiveFinished;
+                        if (finished != null) finished(offerId, "Archivo recibido", destination);
                     }
                 }
             }
@@ -281,8 +310,8 @@ namespace Lazo
             {
                 if (accepted)
                 {
-                    Action<Guid, string> finished = ReceiveFinished;
-                    if (finished != null) finished(offerId, "Error: " + ex.Message);
+                    Action<Guid, string, string> finished = ReceiveFinished;
+                    if (finished != null) finished(offerId, "Error: " + ex.Message, null);
                 }
             }
             finally
@@ -310,10 +339,13 @@ namespace Lazo
                 using (BinaryReader reader = new BinaryReader(stream, Encoding.UTF8, true))
                 using (BinaryWriter writer = new BinaryWriter(stream, Encoding.UTF8, true))
                 {
-                    writer.Write(Encoding.ASCII.GetBytes("LAZO1"));
-                    WriteText(writer, CleanLabel(Environment.MachineName));
+                    byte[] preview = ImagePreview(path);
+                    writer.Write(Encoding.ASCII.GetBytes("LAZO2"));
+                    WriteText(writer, Label());
                     WriteText(writer, info.Name);
                     writer.Write(info.Length);
+                    writer.Write(preview == null ? 0 : preview.Length);
+                    if (preview != null && preview.Length > 0) writer.Write(preview);
                     writer.Flush();
                     byte reply = reader.ReadByte();
                     if (reply != 1) throw new InvalidOperationException("El destinatario rechazó la transferencia o está ocupado.");
@@ -341,6 +373,59 @@ namespace Lazo
             }
         }
 
+        private static byte[] ImagePreview(string path)
+        {
+            try
+            {
+                string ext = Path.GetExtension(path);
+                if (string.IsNullOrEmpty(ext)) return null;
+                ext = ext.ToLowerInvariant();
+                if (ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".bmp" && ext != ".gif" &&
+                    ext != ".tif" && ext != ".tiff") return null;
+                if (new FileInfo(path).Length > 25L * 1024 * 1024) return null;
+                using (FileStream input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (System.Drawing.Image source = System.Drawing.Image.FromStream(input, false, false))
+                {
+                    int edge = 160;
+                    int width = source.Width;
+                    int height = source.Height;
+                    if (width <= 0 || height <= 0) return null;
+                    if (width > edge || height > edge)
+                    {
+                        double scale = Math.Min((double)edge / width, (double)edge / height);
+                        width = Math.Max(1, (int)Math.Round(width * scale));
+                        height = Math.Max(1, (int)Math.Round(height * scale));
+                    }
+                    using (System.Drawing.Bitmap bitmap = new System.Drawing.Bitmap(width, height))
+                    using (System.Drawing.Graphics graphics = System.Drawing.Graphics.FromImage(bitmap))
+                    using (MemoryStream output = new MemoryStream())
+                    {
+                        graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                        graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                        graphics.Clear(System.Drawing.Color.White);
+                        graphics.DrawImage(source, 0, 0, width, height);
+                        System.Drawing.Imaging.ImageCodecInfo codec = null;
+                        System.Drawing.Imaging.ImageCodecInfo[] codecs = System.Drawing.Imaging.ImageCodecInfo.GetImageEncoders();
+                        for (int i = 0; i < codecs.Length; i++)
+                            if (codecs[i].MimeType == "image/jpeg") codec = codecs[i];
+                        if (codec == null) bitmap.Save(output, System.Drawing.Imaging.ImageFormat.Jpeg);
+                        else
+                        {
+                            using (System.Drawing.Imaging.EncoderParameters parameters = new System.Drawing.Imaging.EncoderParameters(1))
+                            {
+                                parameters.Param[0] = new System.Drawing.Imaging.EncoderParameter(
+                                    System.Drawing.Imaging.Encoder.Quality, 68L);
+                                bitmap.Save(output, codec, parameters);
+                            }
+                        }
+                        if (output.Length == 0 || output.Length > 48000) return null;
+                        return output.ToArray();
+                    }
+                }
+            }
+            catch { return null; }
+        }
+
         private static string ReadText(BinaryReader reader, int maxBytes)
         {
             int length = reader.ReadUInt16();
@@ -356,6 +441,14 @@ namespace Lazo
             if (bytes.Length > 255) throw new InvalidOperationException("Nombre demasiado largo.");
             writer.Write((ushort)bytes.Length);
             writer.Write(bytes);
+        }
+
+        private static string Label()
+        {
+            string name = Identity.Current;
+            if (string.IsNullOrWhiteSpace(name)) name = Environment.UserName;
+            if (string.IsNullOrWhiteSpace(name)) name = "Lazo";
+            return CleanLabel(name);
         }
 
         private static string CleanLabel(string value)

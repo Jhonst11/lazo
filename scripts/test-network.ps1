@@ -7,7 +7,7 @@ $output = Join-Path $project 'bin'
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 $exe = Join-Path $output 'NetworkSmoke.exe'
 & $csc /nologo /target:exe /utf8output ("/out:" + $exe) `
-    (Join-Path $project 'src\NetworkEngine.cs') (Join-Path $project 'tests\NetworkSmoke.cs')
+    (Join-Path $project 'src\NetworkEngine.cs') (Join-Path $project 'src\Identity.cs') (Join-Path $project 'src\ProfilePhoto.cs') (Join-Path $project 'tests\NetworkSmoke.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Falló la compilación de la prueba de red.' }
 $run = Join-Path $output ('smoke-' + [guid]::NewGuid().ToString('N'))
 & $exe $run
