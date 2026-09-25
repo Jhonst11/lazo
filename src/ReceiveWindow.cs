@@ -145,10 +145,8 @@ namespace Lazo
             outer.Children.Add(_dismiss);
             KeyDown += (s, e) => { if (e.Key == System.Windows.Input.Key.Escape) CloseAnimated(); };
             Closed += (s, e) => _timeout.Stop();
-            SourceInitialized += (s, e) => WindowPlacement.PlaceBottomRight(this);
             Loaded += (s, e) =>
             {
-                WindowPlacement.PlaceBottomRight(this);
                 TranslateTransform rise = new TranslateTransform(0, 18);
                 _shell.RenderTransform = rise;
                 rise.BeginAnimation(TranslateTransform.YProperty, Theme.Animation(18, 0, 190));

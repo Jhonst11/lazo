@@ -34,6 +34,11 @@ namespace Lazo
 
         public static void PlaceBottomRight(Window window)
         {
+            PlaceBottomRight(window, 0);
+        }
+
+        public static void PlaceBottomRight(Window window, int stack)
+        {
             IntPtr hwnd = new WindowInteropHelper(window).Handle;
             if (hwnd == IntPtr.Zero) return;
             Rect bounds;
@@ -42,7 +47,7 @@ namespace Lazo
             int width = bounds.Right - bounds.Left;
             int height = bounds.Bottom - bounds.Top;
             int x = area.Right - width - 18;
-            int y = area.Bottom - height - 18;
+            int y = area.Bottom - height - 18 - stack * (height + 8);
             if (x < area.Left) x = area.Left;
             if (y < area.Top) y = area.Top;
             SetWindowPos(hwnd, IntPtr.Zero, x, y, 0, 0, SwpNoSize | SwpNoZOrder | SwpNoActivate);

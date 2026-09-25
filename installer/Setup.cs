@@ -10,8 +10,8 @@ using Microsoft.Win32;
 
 [assembly: AssemblyTitle("Lazo Installer")]
 [assembly: AssemblyCompany("Jhon Andrew")]
-[assembly: AssemblyVersion("0.4.7.0")]
-[assembly: AssemblyFileVersion("0.4.7.0")]
+[assembly: AssemblyVersion("0.4.8.0")]
+[assembly: AssemblyFileVersion("0.4.8.0")]
 
 namespace LazoInstaller
 {
@@ -22,8 +22,15 @@ namespace LazoInstaller
         {
             bool uninstall = Array.IndexOf(args, "/uninstall") >= 0;
             bool preview = Array.IndexOf(args, "/preview") >= 0;
+            bool update = Array.IndexOf(args, "/update") >= 0;
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            if (update)
+            {
+                try { InstallWork.Update(); }
+                catch (Exception ex) { MessageBox.Show(ex.Message, "Lazo"); }
+                return;
+            }
             Application.Run(new SetupForm(uninstall, preview));
         }
     }
@@ -61,7 +68,7 @@ namespace LazoInstaller
                 Text = "TRANSFERENCIA\nLOCAL", ForeColor = Color.FromArgb(175, 175, 175),
                 Font = new Font("Consolas", 8F) });
             rail.Controls.Add(new Label { Left = 25, Top = 300, Width = 120, Height = 20,
-                Text = "VERSIÓN 0.4.7", ForeColor = Color.FromArgb(175, 175, 175),
+                Text = "VERSIÓN 0.4.8", ForeColor = Color.FromArgb(175, 175, 175),
                 Font = new Font("Consolas", 8F) });
 
             Controls.Add(new Label { Left = 193, Top = 31, Width = 355, Height = 35,
@@ -174,12 +181,31 @@ namespace LazoInstaller
             }
         }
 
+        public static void Update()
+        {
+            string desktop = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory), "Lazo.lnk");
+            bool startup = false;
+            try
+            {
+                using (RegistryKey run = Machine.OpenSubKey(RunKey))
+                    startup = run != null && run.GetValue(AppName) != null;
+            }
+            catch { }
+            Install(startup, File.Exists(desktop), true);
+            Process.Start(Path.Combine(InstallDirectory, "Lazo.exe"));
+        }
+
         public static string Install(bool startup, bool desktop)
+        {
+            return Install(startup, desktop, false);
+        }
+
+        public static string Install(bool startup, bool desktop, bool forceClose)
         {
             string folder = InstallDirectory;
             string app = Path.Combine(folder, "Lazo.exe");
             string uninstall = Path.Combine(folder, "Uninstall.exe");
-            EnsureClosed();
+            EnsureClosed(forceClose);
             Directory.CreateDirectory(folder);
             string next = Path.Combine(folder, "Lazo.exe.new");
             using (Stream resource = Assembly.GetExecutingAssembly().GetManifestResourceStream("Lazo.Payload"))
@@ -205,7 +231,7 @@ namespace LazoInstaller
                 {
                     entry.SetValue("DisplayName", "Lazo");
                     entry.SetValue("Publisher", "Jhon Andrew");
-                    entry.SetValue("DisplayVersion", "0.4.7");
+                    entry.SetValue("DisplayVersion", "0.4.8");
                     entry.SetValue("InstallLocation", folder);
                     entry.SetValue("DisplayIcon", app);
                     entry.SetValue("UninstallString", "\"" + uninstall + "\" /uninstall");
@@ -236,7 +262,7 @@ namespace LazoInstaller
             string folder = InstallDirectory;
             string app = Path.Combine(folder, "Lazo.exe");
             string uninstaller = Path.Combine(folder, "Uninstall.exe");
-            EnsureClosed();
+            EnsureClosed(false);
             string warning = "";
             try { DeleteRule(TcpRule); DeleteRule(UdpRule); }
             catch (Exception ex) { warning = "No se pudieron retirar todas las reglas del firewall: " + ex.Message; }
@@ -262,17 +288,25 @@ namespace LazoInstaller
             return warning.Trim();
         }
 
-        private static void EnsureClosed()
+        private static void EnsureClosed(bool force)
         {
-            foreach (Process process in Process.GetProcessesByName("Lazo"))
+            for (int attempt = 0; attempt < (force ? 24 : 1); attempt++)
             {
-                try
+                bool busy = false;
+                foreach (Process process in Process.GetProcessesByName("Lazo"))
                 {
-                    if (process.Id != Process.GetCurrentProcess().Id)
-                        throw new InvalidOperationException("Cierra todas las ventanas de Lazo desde la bandeja y vuelve a intentarlo.");
+                    try
+                    {
+                        if (process.Id == Process.GetCurrentProcess().Id) continue;
+                        busy = true;
+                        if (force && attempt >= 8) process.Kill();
+                    }
+                    catch (System.ComponentModel.Win32Exception) { }
+                    finally { process.Dispose(); }
                 }
-                catch (System.ComponentModel.Win32Exception) { }
-                finally { process.Dispose(); }
+                if (!busy) return;
+                if (!force) throw new InvalidOperationException("Cierra todas las ventanas de Lazo desde la bandeja y vuelve a intentarlo.");
+                System.Threading.Thread.Sleep(250);
             }
         }
 

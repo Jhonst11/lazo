@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -39,15 +40,17 @@ namespace Lazo
         private EverythingSearch _everything;
         private Hotkeys _hotkeys;
         private System.Windows.Forms.NotifyIcon _tray;
-        private ReceiveWindow _receiveWindow;
+        private readonly System.Collections.Generic.List<ReceiveWindow> _inbox = new System.Collections.Generic.List<ReceiveWindow>();
+        private readonly System.Collections.Generic.Dictionary<string, double> _sendProgress = new System.Collections.Generic.Dictionary<string, double>();
+        private int _sendSerial;
         private Peer _picked;
-        private string _manualPath;
+        private readonly System.Collections.Generic.List<string> _manualFiles = new System.Collections.Generic.List<string>();
         private string _activeQuery;
         private string _networkError;
         private int _selectedRow;
         private bool _exiting;
         private bool _animating;
-        private bool _sending;
+        private int _activeSends;
         private bool _settingsOpen;
         private bool _holding;
         private DateTime _shownUtc;
@@ -61,6 +64,7 @@ namespace Lazo
             Theme.Load();
             Identity.Load();
             ProfilePhoto.Load();
+            Updater.Load();
             if (previewGlass) Theme.SetForPreview(ThemeKind.Glass);
             if (previewDark) Theme.SetForPreview(ThemeKind.Dark);
             if (previewStandard) Theme.SetInterface(InterfaceKind.Standard, false);
@@ -143,6 +147,8 @@ namespace Lazo
                 _network.OfferReceived += OnOfferReceived;
                 _network.ReceiveProgress += OnReceiveProgress;
                 _network.ReceiveFinished += OnReceiveFinished;
+                Updater.CheckInBackground(text => Dispatcher.BeginInvoke((Action)(() => SetStatus(text))),
+                    () => Dispatcher.BeginInvoke((Action)(() => { _exiting = true; Application.Current.Shutdown(); })));
                 try { _network.Start(); }
                 catch (Exception ex)
                 {
@@ -181,13 +187,13 @@ namespace Lazo
             outer.Children.Add(_liquid);
             _shell.DragEnter += (s, e) =>
             {
-                e.Effects = HasOneFile(e.Data) ? DragDropEffects.Copy : DragDropEffects.None;
+                e.Effects = HasFiles(e.Data) ? DragDropEffects.Copy : DragDropEffects.None;
                 e.Handled = true;
             };
-            _shell.Drop += async (s, e) =>
+            _shell.Drop += (s, e) =>
             {
-                string[] paths = e.Data.GetData(DataFormats.FileDrop) as string[];
-                if (paths != null && paths.Length == 1) await SelectFileAsync(paths[0]);
+                string[] paths = ExistingFiles(e.Data.GetData(DataFormats.FileDrop) as string[]);
+                if (paths.Length > 0) SendFiles(paths, _picked);
             };
             _shell.MouseLeftButtonDown += OnShellMouseDown;
 
@@ -405,7 +411,7 @@ namespace Lazo
                 if (box.Text.Trim().Length == 0)
                 {
                     _results.Clear();
-                    if (_empty != null) _empty.Text = _manualPath == null ? "Escribe un nombre para buscar archivos." : "";
+                    if (_empty != null) _empty.Text = _manualFiles.Count == 0 ? "Escribe un nombre para buscar archivos." : "";
                     RenderResults();
                 }
                 else
@@ -513,6 +519,18 @@ namespace Lazo
             startup.Checked += (s, e) => Startup.Set(true);
             startup.Unchecked += (s, e) => { Startup.Set(false); startup.IsChecked = Startup.IsEnabled(); };
             panel.Children.Add(startup);
+            CheckBox updates = new CheckBox
+            {
+                Content = "Actualizar automáticamente",
+                IsChecked = Updater.Enabled,
+                Foreground = Theme.Ink,
+                FontFamily = Theme.Font,
+                FontSize = 12,
+                Margin = new Thickness(0, 8, 0, 2)
+            };
+            updates.Checked += (s, e) => { Updater.Set(true, !_preview); if (!_preview) Updater.CheckInBackground(text => Dispatcher.BeginInvoke((Action)(() => SetStatus(text))), () => Dispatcher.BeginInvoke((Action)(() => { _exiting = true; Application.Current.Shutdown(); }))); };
+            updates.Unchecked += (s, e) => Updater.Set(false, !_preview);
+            panel.Children.Add(updates);
             ScrollViewer scroll = new ScrollViewer
             {
                 Content = panel,
@@ -637,7 +655,7 @@ namespace Lazo
             }
             Theme.SetInterface(kind, !_preview);
             _picked = null;
-            _manualPath = null;
+            _manualFiles.Clear();
             _results.Clear();
             _selectedRow = 0;
             BuildUi();
@@ -671,7 +689,7 @@ namespace Lazo
         {
             _picked = peer;
             _settingsOpen = false;
-            _manualPath = null;
+            _manualFiles.Clear();
             _results.Clear();
             _selectedRow = 0;
             BuildUi();
@@ -682,7 +700,7 @@ namespace Lazo
         private void BackToDevices()
         {
             _picked = null;
-            _manualPath = null;
+            _manualFiles.Clear();
             _results.Clear();
             _selectedRow = 0;
             _settingsOpen = false;
@@ -692,7 +710,7 @@ namespace Lazo
 
         private bool HasResults()
         {
-            if (_manualPath != null) return true;
+            if (_manualFiles.Count > 0) return true;
             return _search != null && _search.Text.Trim().Length > 0;
         }
 
@@ -772,7 +790,7 @@ namespace Lazo
             if (_resultList == null) return;
             _resultList.Children.Clear();
             List<string> paths = _search == null || _search.Text.Trim().Length == 0
-                ? (_manualPath == null ? new List<string>() : new List<string> { _manualPath })
+                ? _manualFiles.ToList()
                 : _results.ToList();
             for (int i = 0; i < paths.Count; i++) _resultList.Children.Add(FileRow(paths[i], i));
             if (_empty != null) _empty.Visibility = paths.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -960,7 +978,7 @@ namespace Lazo
             button.MouseLeave += (s, e) => { if (!button.IsMouseOver) circle.Background = Theme.AvatarSurface; };
             DragEventHandler drag = (s, e) =>
             {
-                bool file = HasOneFile(e.Data);
+                bool file = HasFiles(e.Data);
                 e.Effects = file ? DragDropEffects.Copy : DragDropEffects.None;
                 e.Handled = true;
                 circle.Background = file ? Theme.AvatarHover : Theme.AvatarSurface;
@@ -968,12 +986,11 @@ namespace Lazo
             button.PreviewDragOver += drag;
             button.DragOver += drag;
             button.DragLeave += (s, e) => circle.Background = Theme.AvatarSurface;
-            button.Drop += async (s, e) =>
+            button.Drop += (s, e) =>
             {
                 circle.Background = Theme.AvatarSurface;
                 e.Handled = true;
-                string[] paths = e.Data.GetData(DataFormats.FileDrop) as string[];
-                if (paths != null && paths.Length == 1) await SendToAsync(paths[0], peer);
+                SendFiles(ExistingFiles(e.Data.GetData(DataFormats.FileDrop) as string[]), peer);
             };
             button.Click += (s, e) => PickAndSend(peer);
             return button;
@@ -988,17 +1005,17 @@ namespace Lazo
             rows = (count + columns - 1) / columns;
         }
 
-        private async void PickAndSend(Peer peer)
+        private void PickAndSend(Peer peer)
         {
-            if (_preview || peer == null || _sending) return;
-            OpenFileDialog dialog = new OpenFileDialog { Title = "Archivo para " + peer.Name, Multiselect = false };
+            if (_preview || peer == null) return;
+            OpenFileDialog dialog = new OpenFileDialog { Title = "Archivos para " + peer.Name, Multiselect = true };
             bool topmost = Topmost;
             _holding = true;
             Topmost = false;
             bool? chosen = dialog.ShowDialog(this);
             Topmost = topmost;
             _holding = false;
-            if (chosen == true) await SendToAsync(dialog.FileName, peer);
+            if (chosen == true) SendFiles(dialog.FileNames, peer);
         }
 
         private Button OwnAvatar()
@@ -1074,35 +1091,42 @@ namespace Lazo
             return content;
         }
 
-        private static bool HasOneFile(System.Windows.IDataObject data)
+        private static bool HasFiles(System.Windows.IDataObject data)
         {
-            string[] paths = data.GetData(DataFormats.FileDrop) as string[];
-            return paths != null && paths.Length == 1 && File.Exists(paths[0]);
+            return ExistingFiles(data.GetData(DataFormats.FileDrop) as string[]).Length > 0;
         }
 
-        private async void ChooseFile()
+        private static string[] ExistingFiles(string[] paths)
         {
-            OpenFileDialog dialog = new OpenFileDialog { Title = "Seleccionar archivo", Multiselect = false };
+            if (paths == null) return new string[0];
+            return paths.Where(File.Exists).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        }
+
+        private void ChooseFile()
+        {
+            OpenFileDialog dialog = new OpenFileDialog { Title = "Seleccionar archivos", Multiselect = true };
             _holding = true;
             bool? chosen = dialog.ShowDialog(this);
             _holding = false;
-            if (chosen == true) await SelectFileAsync(dialog.FileName);
+            if (chosen == true) SendFiles(dialog.FileNames, _picked);
         }
 
-        private async Task SelectFileAsync(string path)
+        private void SendFiles(string[] paths, Peer peer)
         {
-            if (!File.Exists(path)) { SetStatus("Selecciona un archivo válido."); return; }
-            if (!Theme.IsMinimal && _picked == null) return;
-            if (_picked != null)
+            paths = ExistingFiles(paths);
+            if (paths.Length == 0) { SetStatus("Selecciona archivos válidos."); return; }
+            if (peer != null)
             {
-                await SendToAsync(path, _picked);
+                foreach (string path in paths) BeginSend(path, peer);
                 return;
             }
-            _manualPath = path;
+            if (!Theme.IsMinimal) return;
+            _manualFiles.Clear();
+            _manualFiles.AddRange(paths);
             if (_search != null) _search.Text = "";
             _selectedRow = 0;
             if (_empty != null) _empty.Text = "";
-            SetStatus("Selecciona un destinatario");
+            SetStatus(paths.Length == 1 ? "Selecciona un destinatario" : paths.Length + " archivos · elige destinatario");
             RenderResults();
             SyncChrome();
         }
@@ -1110,7 +1134,7 @@ namespace Lazo
         private string SelectedPath()
         {
             List<string> paths = _search == null || _search.Text.Trim().Length == 0
-                ? (_manualPath == null ? new List<string>() : new List<string> { _manualPath })
+                ? _manualFiles.ToList()
                 : _results.ToList();
             if (paths.Count == 0) return null;
             if (_selectedRow < 0 || _selectedRow >= paths.Count) _selectedRow = 0;
@@ -1146,25 +1170,28 @@ namespace Lazo
 
         private async Task SendToAsync(string path, Peer peer)
         {
-            if (_sending || _preview || peer == null) return;
+            if (_preview || peer == null) return;
             if (!File.Exists(path)) { SetStatus("El archivo ya no existe."); return; }
-            _sending = true;
-            SetStatus("Esperando a " + peer.Name + "…");
-            if (_progressScale != null) _progressScale.ScaleX = 0;
+            string key = Interlocked.Increment(ref _sendSerial) + "|" + path;
+            lock (_sendProgress) _sendProgress[key] = 0;
+            Interlocked.Increment(ref _activeSends);
+            UpdateSendStatus(Path.GetFileName(path), 0);
             try
             {
                 await _network.SendAsync(peer, path, value => Dispatcher.BeginInvoke((Action)(() =>
                 {
-                    SetStatus("Enviando " + (value * 100).ToString("0") + "% a " + peer.Name);
-                    if (_progressScale != null)
-                        _progressScale.BeginAnimation(ScaleTransform.ScaleXProperty, Theme.Animation(_progressScale.ScaleX, value, 90));
+                    lock (_sendProgress) _sendProgress[key] = value;
+                    UpdateSendStatus(Path.GetFileName(path), value);
                 })));
-                SetStatus("Entregado a " + peer.Name);
-                if (_progressScale != null)
-                    _progressScale.BeginAnimation(ScaleTransform.ScaleXProperty, Theme.Animation(_progressScale.ScaleX, 1, 120));
+                UpdateSendStatus(Path.GetFileName(path), 1);
             }
             catch (Exception ex) { SetStatus(ex.Message); }
-            finally { _sending = false; }
+            finally
+            {
+                lock (_sendProgress) _sendProgress.Remove(key);
+                Interlocked.Decrement(ref _activeSends);
+                if (_activeSends == 0) SetStatus("Entregado");
+            }
         }
 
         private void SetStatus(string text)
@@ -1172,25 +1199,50 @@ namespace Lazo
             if (_status != null) _status.Text = text;
         }
 
+        private void UpdateSendStatus(string name, double value)
+        {
+            int count = _activeSends;
+            if (count <= 1) SetStatus("Enviando " + (value * 100).ToString("0") + "% · " + name);
+            else SetStatus("Enviando " + count + " archivos · " + name);
+            if (_progressScale == null) return;
+            double average = value;
+            lock (_sendProgress) if (_sendProgress.Count > 0) average = _sendProgress.Values.Average();
+            _progressScale.BeginAnimation(ScaleTransform.ScaleXProperty, Theme.Animation(_progressScale.ScaleX, average, 90));
+        }
+
         private Task<bool> OnOfferReceived(Offer offer)
         {
             TaskCompletionSource<bool> response = new TaskCompletionSource<bool>();
             Dispatcher.BeginInvoke((Action)(() =>
             {
-                _receiveWindow = new ReceiveWindow(offer, accept => response.TrySetResult(accept));
-                _receiveWindow.Show();
+                ReceiveWindow window = new ReceiveWindow(offer, accept => response.TrySetResult(accept));
+                window.Closed += (s, e) => { _inbox.Remove(window); StackInbox(); };
+                _inbox.Add(window);
+                window.Show();
+                StackInbox();
             }));
             return response.Task;
         }
 
+        private void StackInbox()
+        {
+            for (int i = 0; i < _inbox.Count; i++) WindowPlacement.PlaceBottomRight(_inbox[i], i);
+        }
+
+        private ReceiveWindow Inbox(Guid id)
+        {
+            for (int i = 0; i < _inbox.Count; i++) if (_inbox[i].OfferId == id) return _inbox[i];
+            return null;
+        }
+
         private void OnReceiveProgress(Guid id, double value)
         {
-            Dispatcher.BeginInvoke((Action)(() => { if (_receiveWindow != null && _receiveWindow.OfferId == id) _receiveWindow.SetProgress(value); }));
+            Dispatcher.BeginInvoke((Action)(() => { ReceiveWindow window = Inbox(id); if (window != null) window.SetProgress(value); }));
         }
 
         private void OnReceiveFinished(Guid id, string message, string path)
         {
-            Dispatcher.BeginInvoke((Action)(() => { if (_receiveWindow != null && _receiveWindow.OfferId == id) _receiveWindow.Finish(message, path); }));
+            Dispatcher.BeginInvoke((Action)(() => { ReceiveWindow window = Inbox(id); if (window != null) window.Finish(message, path); }));
         }
 
         private void OnWindowKeyDown(object sender, KeyEventArgs e)
@@ -1275,7 +1327,7 @@ namespace Lazo
         {
             _settingsOpen = false;
             _picked = null;
-            _manualPath = null;
+            _manualFiles.Clear();
             _results.Clear();
             _selectedRow = 0;
             BuildUi();

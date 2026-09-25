@@ -49,7 +49,7 @@ namespace Lazo
         private UdpClient _udp;
         private TcpListener _listener;
         private volatile bool _running;
-        private int _receiving;
+        private int _activeReceives;
 
         public event Action<List<Peer>> PeersChanged;
         public event Func<Offer, Task<bool>> OfferReceived;
@@ -261,8 +261,9 @@ namespace Lazo
                         byte[] preview = previewLength == 0 ? null : reader.ReadBytes(previewLength);
                         if (preview != null && preview.Length != previewLength) return;
                         offerId = Guid.NewGuid();
-                        if (Interlocked.CompareExchange(ref _receiving, 1, 0) != 0)
+                        if (Interlocked.Increment(ref _activeReceives) > 8)
                         {
+                            Interlocked.Decrement(ref _activeReceives);
                             writer.Write((byte)0); writer.Flush(); return;
                         }
                         ownsReceive = true;
@@ -317,11 +318,20 @@ namespace Lazo
             finally
             {
                 if (temp != null) try { File.Delete(temp); } catch { }
-                if (ownsReceive) Interlocked.Exchange(ref _receiving, 0);
+                if (ownsReceive) Interlocked.Decrement(ref _activeReceives);
             }
         }
 
+        private static readonly System.Threading.SemaphoreSlim _sendSlots = new System.Threading.SemaphoreSlim(8);
+
         public async Task SendAsync(Peer peer, string path, Action<double> progress)
+        {
+            await _sendSlots.WaitAsync();
+            try { await SendOneAsync(peer, path, progress); }
+            finally { _sendSlots.Release(); }
+        }
+
+        private async Task SendOneAsync(Peer peer, string path, Action<double> progress)
         {
             FileInfo info = new FileInfo(path);
             if (!info.Exists) throw new FileNotFoundException("El archivo ya no existe.");
