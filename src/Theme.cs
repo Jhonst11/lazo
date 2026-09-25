@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -7,25 +8,71 @@ using System.Windows.Media.Effects;
 
 namespace Lazo
 {
+    internal enum ThemeKind { Raycast, Glass }
+
     internal static class Theme
     {
-        public static readonly Brush Ink = Brush("#202020");
-        public static readonly Brush Paper = Brush("#F6F6F4");
-        public static readonly Brush White = Brush("#FFFFFF");
-        public static readonly Brush Muted = Brush("#777777");
-        public static readonly Brush Line = Brush("#D9D9D7");
-        public static readonly Brush Rail = Brush("#222222");
-        public static readonly Brush RailMuted = Brush("#A3A3A3");
+        public static ThemeKind Mode { get; private set; }
+        public static bool IsGlass { get { return Mode == ThemeKind.Glass; } }
         public static readonly FontFamily Mono = new FontFamily("Cascadia Code, Consolas");
+        private static readonly FontFamily Sans = new FontFamily("Segoe UI");
 
-        public static Brush Brush(string hex)
+        public static void Load()
+        {
+            try { Mode = File.ReadAllText(SettingsPath()).Trim() == "glass" ? ThemeKind.Glass : ThemeKind.Raycast; }
+            catch { Mode = ThemeKind.Raycast; }
+        }
+
+        public static void SetForPreview(ThemeKind mode) { Mode = mode; }
+
+        public static void Toggle(bool persist)
+        {
+            Mode = IsGlass ? ThemeKind.Raycast : ThemeKind.Glass;
+            if (!persist) return;
+            try
+            {
+                string path = SettingsPath();
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                File.WriteAllText(path, IsGlass ? "glass" : "raycast");
+            }
+            catch { /* The chosen theme still works for this session. */ }
+        }
+
+        private static string SettingsPath()
+        {
+            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Lazo", "theme.txt");
+        }
+
+        public static Brush Color(string hex)
         {
             return new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
         }
 
+        public static Brush Ink { get { return Color(IsGlass ? "#222222" : "#F4F4F4"); } }
+        public static Brush Muted { get { return Color(IsGlass ? "#646464" : "#A6A6A9"); } }
+        public static Brush Line { get { return Color(IsGlass ? "#BFFFFFFF" : "#3D3D42"); } }
+        public static Brush CardSurface { get { return Color(IsGlass ? "#B8FFFFFF" : "#252528"); } }
+        public static Brush SoftSurface { get { return Color(IsGlass ? "#80FFFFFF" : "#2D2D31"); } }
+        public static Brush Primary { get { return Color(IsGlass ? "#252525" : "#F2F2F2"); } }
+        public static Brush PrimaryText { get { return Color(IsGlass ? "#FFFFFF" : "#19191B"); } }
+        public static FontFamily Font { get { return IsGlass ? Sans : Mono; } }
+        public static CornerRadius Radius { get { return new CornerRadius(IsGlass ? 20 : 10); } }
+
+        public static Brush ShellSurface()
+        {
+            if (!IsGlass) return Color("#1B1B1E");
+            LinearGradientBrush gradient = new LinearGradientBrush();
+            gradient.StartPoint = new Point(0, 0);
+            gradient.EndPoint = new Point(1, 1);
+            gradient.GradientStops.Add(new GradientStop(System.Windows.Media.Color.FromArgb(239, 252, 252, 252), 0));
+            gradient.GradientStops.Add(new GradientStop(System.Windows.Media.Color.FromArgb(222, 231, 231, 231), 0.52));
+            gradient.GradientStops.Add(new GradientStop(System.Windows.Media.Color.FromArgb(231, 249, 249, 249), 1));
+            return gradient;
+        }
+
         public static TextBlock Text(string value, double size, Brush color, FontWeight weight)
         {
-            return new TextBlock { Text = value, FontFamily = Mono, FontSize = size,
+            return new TextBlock { Text = value, FontFamily = Font, FontSize = size,
                 FontWeight = weight, Foreground = color, TextWrapping = TextWrapping.Wrap };
         }
 
@@ -34,37 +81,31 @@ namespace Lazo
             return Text(value, size, color, FontWeights.Normal);
         }
 
-        public static Border Rule()
-        {
-            return new Border { Height = 1, Background = Line };
-        }
-
         public static Button Button(string label, bool primary)
         {
-            Button button = new Button { Content = label, FontFamily = Mono, FontSize = 12,
+            Button button = new Button { Content = label, FontFamily = Font, FontSize = 12,
                 FontWeight = FontWeights.SemiBold, Cursor = System.Windows.Input.Cursors.Hand,
-                MinHeight = 42, Padding = new Thickness(18, 0, 18, 0),
-                Background = primary ? Ink : White,
-                Foreground = primary ? White : Ink,
-                BorderBrush = primary ? Ink : Line, BorderThickness = new Thickness(1) };
+                MinHeight = 36, Padding = new Thickness(16, 0, 16, 0),
+                Background = primary ? Primary : SoftSurface,
+                Foreground = primary ? PrimaryText : Ink,
+                BorderBrush = primary ? Primary : Line, BorderThickness = new Thickness(1) };
             ControlTemplate template = new ControlTemplate(typeof(System.Windows.Controls.Button));
             FrameworkElementFactory frame = new FrameworkElementFactory(typeof(Border));
-            frame.Name = "frame";
             frame.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding("Background") { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
             frame.SetBinding(Border.BorderBrushProperty, new System.Windows.Data.Binding("BorderBrush") { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
             frame.SetBinding(Border.BorderThicknessProperty, new System.Windows.Data.Binding("BorderThickness") { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
-            frame.SetValue(Border.CornerRadiusProperty, new CornerRadius(3));
+            frame.SetValue(Border.CornerRadiusProperty, new CornerRadius(IsGlass ? 17 : 8));
             FrameworkElementFactory content = new FrameworkElementFactory(typeof(ContentPresenter));
             content.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
             content.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
             content.SetValue(ContentPresenter.MarginProperty, new Thickness(8, 0, 8, 0));
             frame.AppendChild(content);
             template.VisualTree = frame;
-            Trigger over = new Trigger { Property = System.Windows.Controls.Button.IsMouseOverProperty, Value = true };
-            over.Setters.Add(new Setter(System.Windows.Controls.Button.OpacityProperty, 0.75));
-            template.Triggers.Add(over);
+            Trigger hover = new Trigger { Property = System.Windows.Controls.Button.IsMouseOverProperty, Value = true };
+            hover.Setters.Add(new Setter(System.Windows.Controls.Button.OpacityProperty, 0.78));
+            template.Triggers.Add(hover);
             Trigger disabled = new Trigger { Property = System.Windows.Controls.Button.IsEnabledProperty, Value = false };
-            disabled.Setters.Add(new Setter(System.Windows.Controls.Button.OpacityProperty, 0.38));
+            disabled.Setters.Add(new Setter(System.Windows.Controls.Button.OpacityProperty, 0.4));
             template.Triggers.Add(disabled);
             button.Template = template;
             return button;
@@ -72,42 +113,14 @@ namespace Lazo
 
         public static Border Card(UIElement child, Thickness padding)
         {
-            return new Border { Background = White, BorderBrush = Line,
-                BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4),
-                Padding = padding, Child = child };
+            return new Border { Background = CardSurface, BorderBrush = Line,
+                BorderThickness = new Thickness(1), CornerRadius = Radius, Padding = padding, Child = child };
         }
 
-        public static void Enter(Window window, FrameworkElement element)
+        public static DropShadowEffect Shadow()
         {
-            element.RenderTransformOrigin = new Point(0.5, 0.5);
-            TransformGroup transforms = new TransformGroup();
-            ScaleTransform scale = new ScaleTransform(0.94, 0.94);
-            TranslateTransform translate = new TranslateTransform(0, 24);
-            transforms.Children.Add(scale);
-            transforms.Children.Add(translate);
-            element.RenderTransform = transforms;
-            element.Opacity = 0;
-            DoubleAnimation fade = Animation(0, 1, 240);
-            DoubleAnimation grow = Animation(0.94, 1, 340);
-            DoubleAnimation rise = Animation(24, 0, 340);
-            element.BeginAnimation(UIElement.OpacityProperty, fade);
-            scale.BeginAnimation(ScaleTransform.ScaleXProperty, grow);
-            scale.BeginAnimation(ScaleTransform.ScaleYProperty, grow.Clone());
-            translate.BeginAnimation(TranslateTransform.YProperty, rise);
-        }
-
-        public static void Leave(FrameworkElement element, Action completed)
-        {
-            TransformGroup transforms = element.RenderTransform as TransformGroup;
-            if (transforms == null) { completed(); return; }
-            ScaleTransform scale = (ScaleTransform)transforms.Children[0];
-            TranslateTransform translate = (TranslateTransform)transforms.Children[1];
-            DoubleAnimation fade = Animation(1, 0, 220);
-            fade.Completed += (s, e) => completed();
-            element.BeginAnimation(UIElement.OpacityProperty, fade);
-            scale.BeginAnimation(ScaleTransform.ScaleXProperty, Animation(1, 0.78, 260));
-            scale.BeginAnimation(ScaleTransform.ScaleYProperty, Animation(1, 0.78, 260));
-            translate.BeginAnimation(TranslateTransform.YProperty, Animation(0, -36, 260));
+            return new DropShadowEffect { Color = Colors.Black, BlurRadius = IsGlass ? 44 : 32,
+                ShadowDepth = IsGlass ? 17 : 12, Opacity = IsGlass ? 0.20 : 0.38, Direction = 270 };
         }
 
         public static DoubleAnimation Animation(double from, double to, int milliseconds)
@@ -116,10 +129,34 @@ namespace Lazo
             { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }, FillBehavior = FillBehavior.HoldEnd };
         }
 
-        public static DropShadowEffect Shadow()
+        public static void Enter(FrameworkElement element)
         {
-            return new DropShadowEffect { Color = Colors.Black, BlurRadius = 38, ShadowDepth = 14,
-                Opacity = 0.22, Direction = 270 };
+            element.RenderTransformOrigin = new Point(0.5, 0.5);
+            TransformGroup group = new TransformGroup();
+            ScaleTransform scale = new ScaleTransform(IsGlass ? 0.90 : 0.96, IsGlass ? 0.90 : 0.96);
+            TranslateTransform translate = new TranslateTransform(0, IsGlass ? 28 : 12);
+            group.Children.Add(scale);
+            group.Children.Add(translate);
+            element.RenderTransform = group;
+            element.Opacity = 0;
+            element.BeginAnimation(UIElement.OpacityProperty, Animation(0, 1, IsGlass ? 340 : 190));
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, Animation(scale.ScaleX, 1, IsGlass ? 420 : 260));
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, Animation(scale.ScaleY, 1, IsGlass ? 420 : 260));
+            translate.BeginAnimation(TranslateTransform.YProperty, Animation(translate.Y, 0, IsGlass ? 420 : 260));
+        }
+
+        public static void Leave(FrameworkElement element, Action completed)
+        {
+            TransformGroup group = element.RenderTransform as TransformGroup;
+            if (group == null) { completed(); return; }
+            ScaleTransform scale = (ScaleTransform)group.Children[0];
+            TranslateTransform translate = (TranslateTransform)group.Children[1];
+            DoubleAnimation fade = Animation(1, 0, IsGlass ? 270 : 170);
+            fade.Completed += (s, e) => completed();
+            element.BeginAnimation(UIElement.OpacityProperty, fade);
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, Animation(1, IsGlass ? 0.72 : 0.89, IsGlass ? 290 : 180));
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, Animation(1, IsGlass ? 0.72 : 0.89, IsGlass ? 290 : 180));
+            translate.BeginAnimation(TranslateTransform.YProperty, Animation(0, IsGlass ? -40 : -16, IsGlass ? 290 : 180));
         }
     }
 }

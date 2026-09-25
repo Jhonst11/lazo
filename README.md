@@ -1,43 +1,58 @@
 # Lazo
 
-Transferencia de archivos entre equipos Windows de la misma subred. La aplicación permanece en la bandeja; se abre con **doble toque de Alt izquierdo** o **Ctrl+Alt+L**.
+Aplicación para enviar archivos directamente entre equipos Windows 10 y 11 de una misma subred privada. Funciona en segundo plano desde la bandeja y se abre con **doble Alt izquierdo** o **Ctrl+Alt+L**. La ventana se centra en la pantalla donde está el cursor; la alerta de recepción hace lo mismo en el equipo destinatario.
 
-![Ventana principal](docs/app.png)
+| Raycast (predeterminado) | Vidrio |
+| --- | --- |
+| ![Tema Raycast](docs/raycast.png) | ![Tema Vidrio](docs/vidrio.png) |
 
-## Uso
+El botón de la esquina superior derecha cambia de tema y guarda la elección. Vidrio es una interpretación para Windows de superficies translúcidas y controles flotantes; no utiliza componentes ni recursos de Apple.
 
-1. Abre `Lazo.exe` en ambos equipos.
-2. Selecciona o arrastra un archivo, elige el equipo y pulsa **Enviar**.
-3. En el otro equipo aparece una ventana sobre las demás. La persona receptora acepta o rechaza; la solicitud caduca después de 90 segundos.
-4. El archivo aceptado se guarda en `Descargas\Lazo`. Una barra muestra el progreso; la ventana se repliega al terminar.
+## Instalar y compartir
 
-Cerrar la ventana principal la oculta en la bandeja. **Salir** en el menú de la bandeja detiene la aplicación.
+Comparte **`dist/Lazo-Setup-0.2.0.exe`**. Es un solo archivo: contiene Lazo, crea accesos directos, registra la desinstalación en Configuración de Windows y configura dos reglas entrantes limitadas al perfil **Privado** y a la **subred local**. Solicita permisos de administrador. Puede iniciar con Windows si se deja marcada la opción del instalador.
 
-## Instalación en otro equipo
+1. Cierra cualquier copia anterior de Lazo desde el icono de la bandeja.
+2. Ejecuta `Lazo-Setup-0.2.0.exe` y acepta el aviso de Windows.
+3. Abre Lazo desde el menú Inicio. Repite la instalación en el otro equipo.
+4. Asegúrate de que ambos equipos estén en una red marcada como **Privada** en Windows.
 
-El paquete de `dist/Lazo-0.1.0.zip` contiene el ejecutable y la configuración opcional del firewall. Descomprime la carpeta en una ubicación permanente. En **cada equipo receptor**, abre PowerShell como administrador y ejecuta `enable-private-network.ps1` desde esa carpeta si Windows no ha permitido ya la conexión entrante. La regla se limita al perfil **Privado** y a la subred local. Mantén la red de Windows configurada como privada.
+El instalador no tiene firma digital. Windows puede mostrar **Editor desconocido** o SmartScreen al compartirlo fuera de este equipo. Para distribuirlo sin esa advertencia hace falta firmarlo con un certificado de código de confianza. No se incluye ningún certificado ni clave privada en el proyecto.
 
-No se usan carpetas compartidas ni permisos SMB. Lazo usa descubrimiento UDP en el puerto `48351` y transferencia TCP en `48352`. Los nombres de equipo provienen de los anuncios de Lazo, no de una lista general de dispositivos de Windows. Ambos equipos deben tener Lazo abierto y estar en la misma subred IPv4; el aislamiento de clientes Wi‑Fi puede impedir la comunicación.
+También puede generarse un paquete portable con `scripts/package.ps1`, pero el instalador es la opción recomendada.
 
-Compatible con Windows 10 y 11 con .NET Framework 4.8 o superior. Esta versión se probó en Windows 11; la prueba entre dos equipos físicos con Windows 10/11 queda pendiente.
+## Usar
 
-## Compilar y probar
+1. Abre la ventana con doble Alt izquierdo o `Ctrl+Alt+L`.
+2. Arrastra un archivo o pulsa **Elegir**.
+3. Busca y selecciona el equipo por nombre o IP. Usa las flechas y Enter si prefieres teclado.
+4. Pulsa **Enviar**. En el receptor aparece una ventana sobre las demás para aceptar o rechazar. La solicitud caduca tras 90 segundos.
+5. El archivo aceptado se guarda en `Descargas\Lazo`. Se verifica con SHA-256 antes de conservarlo; la alerta se repliega al terminar.
 
-No requiere paquetes NuGet ni SDK de .NET. En un equipo con .NET Framework 4.8 y PowerShell:
+Cerrar la ventana principal la oculta en la bandeja. **Salir** en el menú de la bandeja detiene Lazo.
+
+## Red y requisitos
+
+Lazo anuncia su presencia por UDP `48351` y transfiere por TCP `48352`. Los nombres aparecen solo si **ambos equipos tienen Lazo abierto**, están en la misma subred IPv4 privada y el firewall permite la conexión. No usa carpetas compartidas ni permisos SMB. Una red Wi‑Fi con aislamiento entre clientes puede impedir el descubrimiento.
+
+Requiere .NET Framework 4.8 o superior. El ejecutable se compiló y probó en Windows 11; la validación entre dos equipos físicos, incluida Windows 10, sigue pendiente.
+
+## Desarrollo y verificación
+
+No requiere SDK de .NET ni paquetes NuGet en el equipo de desarrollo; usa el compilador de .NET Framework.
 
 ```powershell
 .\scripts\build.ps1 -Release
 .\scripts\test-network.ps1
-.\scripts\package.ps1
+.\scripts\build-installer.ps1
+.\scripts\test-installer.ps1
 ```
 
-El ejecutable queda en `bin/Lazo.exe` y el paquete en `dist/Lazo-0.1.0.zip`. La prueba de red hace una transferencia real a la IP privada del propio equipo y verifica el archivo recibido sin tocar Descargas.
+`test-network.ps1` hace una transferencia real a una IP privada del propio equipo usando puertos temporales y compara el archivo recibido. `test-installer.ps1` comprueba que el instalador contiene el mismo ejecutable que se compiló. La interfaz y el instalador se revisaron visualmente con capturas; la posición de la ventana se comprobó en los dos monitores de este equipo.
 
-## Límites de esta primera versión
+## Alcance de esta versión
 
 - Un archivo por envío, hasta 20 GB; una recepción activa a la vez.
-- El protocolo todavía **no cifra ni autentica** a los equipos. Los nombres anunciados pueden suplantarse. Úsalo solo en redes locales de confianza y verifica el remitente y su IP antes de aceptar archivos.
-- Doble Alt no bloquea el comportamiento normal de Alt en otras aplicaciones; algunas pueden activar su menú tras el primer toque. `Ctrl+Alt+L` queda como alternativa y muestra una advertencia si otra aplicación ya lo usa.
-- No hay inicio automático con Windows ni instalador; el ejecutable debe permanecer abierto para recibir.
-
-La interfaz toma como referencia la composición clara con barra lateral oscura del instalador local del plugin de Revit y añade tipografía monoespaciada y movimiento breve de estilo terminal. No reutiliza archivos ni modifica el plugin.
+- El protocolo aún **no cifra ni autentica** equipos. El nombre del remitente puede suplantarse. Utiliza Lazo solo en redes de confianza y verifica el remitente y su IP antes de aceptar.
+- Doble Alt deja intacto el comportamiento normal de Alt en otras aplicaciones; alguna puede activar su menú tras el primer toque. `Ctrl+Alt+L` queda como alternativa.
+- El instalador y el ejecutable son para Windows. No hay actualización automática.

@@ -1,6 +1,8 @@
 $ErrorActionPreference = 'Stop'
 $project = Split-Path -Parent $PSScriptRoot
-$csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+$csc = if (Test-Path -LiteralPath 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe') {
+    'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+} else { 'C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe' }
 $output = Join-Path $project 'bin'
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 $exe = Join-Path $output 'NetworkSmoke.exe'

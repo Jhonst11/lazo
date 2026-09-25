@@ -29,13 +29,22 @@ internal static class NetworkSmoke
             .Select(a => a.Address)
             .First(a => { byte[] b = a.GetAddressBytes(); return b[0] == 10 || b[0] == 192 && b[1] == 168 || b[0] == 172 && b[1] >= 16 && b[1] <= 31; });
 
-        using (NetworkEngine engine = new NetworkEngine(inbox))
+        int discoveryPort;
+        using (UdpClient probe = new UdpClient(0))
+            discoveryPort = ((IPEndPoint)probe.Client.LocalEndPoint).Port;
+        int transferPort;
+        TcpListener listenerProbe = new TcpListener(IPAddress.Loopback, 0);
+        listenerProbe.Start();
+        transferPort = ((IPEndPoint)listenerProbe.LocalEndpoint).Port;
+        listenerProbe.Stop();
+
+        using (NetworkEngine engine = new NetworkEngine(inbox, discoveryPort, transferPort))
         {
             TaskCompletionSource<string> finished = new TaskCompletionSource<string>();
             engine.OfferReceived += offer => Task.FromResult(true);
             engine.ReceiveFinished += (id, message) => finished.TrySetResult(message);
             engine.Start();
-            Peer self = new Peer { Id = Guid.NewGuid(), Name = "prueba", Address = local, Port = NetworkEngine.TransferPort };
+            Peer self = new Peer { Id = Guid.NewGuid(), Name = "prueba", Address = local, Port = transferPort };
             await engine.SendAsync(self, input, null);
             if (await Task.WhenAny(finished.Task, Task.Delay(10000)) != finished.Task)
                 throw new Exception("No llegó confirmación de recepción.");

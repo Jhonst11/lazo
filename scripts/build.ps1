@@ -25,6 +25,8 @@ $references = foreach ($name in $assemblies) {
 
 $sources = Get-ChildItem -LiteralPath $source -Filter '*.cs' -File | Select-Object -ExpandProperty FullName
 $arguments = @('/nologo','/target:winexe','/platform:anycpu','/utf8output','/warn:4',('/out:' + (Join-Path $output 'Lazo.exe')))
+$icon = Join-Path $project 'assets\lazo.ico'
+if (Test-Path -LiteralPath $icon) { $arguments += '/win32icon:' + $icon }
 if ($Release) { $arguments += '/optimize+' } else { $arguments += '/debug+' }
 $arguments += $references
 $arguments += $sources

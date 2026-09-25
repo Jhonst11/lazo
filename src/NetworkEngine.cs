@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -36,8 +37,11 @@ namespace Lazo
         public const int DiscoveryPort = 48351;
         public const int TransferPort = 48352;
         private const long MaxFileSize = 20L * 1024 * 1024 * 1024;
+        private static readonly Guid DownloadsId = new Guid("374DE290-123F-4565-9164-39C4925E467B");
         private readonly Guid _id = Guid.NewGuid();
         private readonly string _receiveDirectory;
+        private readonly int _discoveryPort;
+        private readonly int _transferPort;
         private readonly object _peerLock = new object();
         private readonly Dictionary<Guid, Peer> _peers = new Dictionary<Guid, Peer>();
         private UdpClient _udp;
@@ -50,20 +54,30 @@ namespace Lazo
         public event Action<Guid, double> ReceiveProgress;
         public event Action<Guid, string> ReceiveFinished;
 
-        public NetworkEngine(string receiveDirectory = null)
+        public NetworkEngine(string receiveDirectory = null, int discoveryPort = DiscoveryPort, int transferPort = TransferPort)
         {
-            _receiveDirectory = receiveDirectory ?? Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "Lazo");
+            _receiveDirectory = receiveDirectory ?? Path.Combine(GetDownloadsPath(), "Lazo");
+            _discoveryPort = discoveryPort;
+            _transferPort = transferPort;
         }
 
         public void Start()
         {
-            _udp = new UdpClient(AddressFamily.InterNetwork);
-            _udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            _udp.Client.Bind(new IPEndPoint(IPAddress.Any, DiscoveryPort));
-            _udp.EnableBroadcast = true;
-            _listener = new TcpListener(IPAddress.Any, TransferPort);
-            _listener.Start(8);
+            try
+            {
+                _udp = new UdpClient(AddressFamily.InterNetwork);
+                _udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                _udp.Client.Bind(new IPEndPoint(IPAddress.Any, _discoveryPort));
+                _udp.EnableBroadcast = true;
+                _listener = new TcpListener(IPAddress.Any, _transferPort);
+                _listener.Start(8);
+            }
+            catch
+            {
+                if (_udp != null) _udp.Close();
+                if (_listener != null) _listener.Stop();
+                throw;
+            }
             _running = true;
             Task.Run((Action)ListenDiscovery);
             Task.Run((Action)BroadcastLoop);
@@ -84,7 +98,7 @@ namespace Lazo
                     int port;
                     if (fields.Length != 4 || fields[0] != "LAZO1" ||
                         !Guid.TryParse(fields[1], out id) || id == _id ||
-                        !int.TryParse(fields[3], out port) || port != TransferPort) continue;
+                        !int.TryParse(fields[3], out port) || port != _transferPort) continue;
                     string name = CleanLabel(fields[2]);
                     if (name.Length == 0) continue;
                     lock (_peerLock)
@@ -104,13 +118,13 @@ namespace Lazo
 
         private void BroadcastLoop()
         {
-            byte[] payload = Encoding.UTF8.GetBytes("LAZO1|" + _id + "|" + CleanLabel(Environment.MachineName) + "|" + TransferPort);
+            byte[] payload = Encoding.UTF8.GetBytes("LAZO1|" + _id + "|" + CleanLabel(Environment.MachineName) + "|" + _transferPort);
             while (_running)
             {
                 try
                 {
                     foreach (IPAddress address in BroadcastAddresses())
-                        _udp.Send(payload, payload.Length, new IPEndPoint(address, DiscoveryPort));
+                        _udp.Send(payload, payload.Length, new IPEndPoint(address, _discoveryPort));
                     lock (_peerLock)
                     {
                         Guid[] stale = _peers.Where(p => (DateTime.UtcNow - p.Value.SeenUtc).TotalSeconds > 9)
@@ -365,11 +379,28 @@ namespace Lazo
             return result;
         }
 
+        private static string GetDownloadsPath()
+        {
+            IntPtr pointer = IntPtr.Zero;
+            try
+            {
+                Guid id = DownloadsId;
+                if (SHGetKnownFolderPath(ref id, 0, IntPtr.Zero, out pointer) == 0 && pointer != IntPtr.Zero)
+                    return Marshal.PtrToStringUni(pointer);
+            }
+            catch { }
+            finally { if (pointer != IntPtr.Zero) Marshal.FreeCoTaskMem(pointer); }
+            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+        }
+
         public void Dispose()
         {
             _running = false;
             if (_udp != null) _udp.Close();
             if (_listener != null) _listener.Stop();
         }
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+        private static extern int SHGetKnownFolderPath(ref Guid rfid, uint flags, IntPtr token, out IntPtr path);
     }
 }
