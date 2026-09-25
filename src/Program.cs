@@ -22,11 +22,13 @@ namespace Lazo
                 receiveApp.Run(new ReceiveWindow(offer, accepted => { }));
                 return;
             }
-            bool preview = Array.IndexOf(args, "--preview") >= 0 || Array.IndexOf(args, "--preview-glass") >= 0;
+            bool preview = Array.IndexOf(args, "--preview") >= 0 || Array.IndexOf(args, "--preview-glass") >= 0 ||
+                           Array.IndexOf(args, "--preview-live-search") >= 0;
             if (preview)
             {
                 Application previewApp = new Application();
-                previewApp.Run(new MainWindow(true, Array.IndexOf(args, "--preview-glass") >= 0));
+                previewApp.Run(new MainWindow(true, Array.IndexOf(args, "--preview-glass") >= 0,
+                    Array.IndexOf(args, "--preview-live-search") >= 0));
                 return;
             }
             bool first;

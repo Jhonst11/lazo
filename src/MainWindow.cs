@@ -8,6 +8,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Threading;
 using Microsoft.Win32;
 
 namespace Lazo
@@ -16,35 +17,36 @@ namespace Lazo
     {
         private readonly NetworkEngine _network = new NetworkEngine();
         private readonly bool _preview;
+        private readonly DispatcherTimer _searchDelay;
+        private readonly List<string> _results = new List<string>();
         private List<Peer> _peers = new List<Peer>();
         private Border _shell;
-        private Border _fileCard;
-        private TextBlock _fileName;
-        private TextBlock _fileMeta;
-        private TextBlock _peerCount;
-        private TextBlock _emptyPeers;
-        private TextBlock _status;
+        private StackPanel _resultList;
         private TextBox _search;
-        private TextBlock _searchHint;
-        private ListBox _peerList;
-        private Button _send;
+        private TextBlock _placeholder;
+        private TextBlock _empty;
+        private TextBlock _count;
+        private TextBlock _status;
         private ScaleTransform _progressScale;
+        private EverythingSearch _everything;
         private Hotkeys _hotkeys;
         private System.Windows.Forms.NotifyIcon _tray;
-        private string _path;
         private ReceiveWindow _receiveWindow;
+        private string _manualPath;
+        private string _activeQuery;
+        private int _selectedRow;
         private bool _exiting;
         private bool _animating;
         private bool _sending;
 
-        public MainWindow(bool preview = false, bool previewGlass = false)
+        public MainWindow(bool preview = false, bool previewGlass = false, bool previewLiveSearch = false)
         {
             _preview = preview;
             Theme.Load();
             if (previewGlass) Theme.SetForPreview(ThemeKind.Glass);
             Title = "Lazo";
-            Width = MinWidth = MaxWidth = 660;
-            Height = MinHeight = MaxHeight = 550;
+            Width = MinWidth = MaxWidth = 766;
+            Height = MinHeight = MaxHeight = 488;
             WindowStyle = WindowStyle.None;
             AllowsTransparency = true;
             Background = Brushes.Transparent;
@@ -52,10 +54,35 @@ namespace Lazo
             Topmost = true;
             ResizeMode = ResizeMode.NoResize;
             WindowStartupLocation = WindowStartupLocation.Manual;
+            _searchDelay = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(140) };
+            _searchDelay.Tick += (s, e) => { _searchDelay.Stop(); RunSearch(); };
+            if (_preview && !previewLiveSearch)
+            {
+                _peers = new List<Peer> {
+                    new Peer { Id = Guid.NewGuid(), Name = "JQUIN" },
+                    new Peer { Id = Guid.NewGuid(), Name = "EQUIPO-OFICINA" },
+                    new Peer { Id = Guid.NewGuid(), Name = "ATLAS" }
+                };
+                _results.AddRange(new[] {
+                    @"C:\Users\JQUIN\Documents\proyecto-neural-21.pdf",
+                    @"C:\Users\JQUIN\Downloads\planos-finales.zip",
+                    @"C:\Users\JQUIN\Desktop\presupuesto.xlsx"
+                });
+            }
             BuildUi();
-
+            if (_preview) { _search.Text = previewLiveSearch ? "Lazo" : "proyecto"; RenderResults(); }
             Loaded += (s, e) => { Theme.Enter(_shell); _search.Focus(); };
-            SourceInitialized += (s, e) => { WindowPlacement.CenterOnCursor(this); if (!_preview) SetupHotkeys(); };
+            SourceInitialized += (s, e) =>
+            {
+                WindowPlacement.CenterOnCursor(this);
+                if (!_preview || previewLiveSearch)
+                {
+                    _everything = new EverythingSearch(new System.Windows.Interop.WindowInteropHelper(this).Handle,
+                        paths => { if (_search.Text.Trim() != _activeQuery) return; _results.Clear(); _results.AddRange(paths); _empty.Text = paths.Count == 0 ? "No se encontraron archivos." : ""; RenderResults(); },
+                        message => { if (_search.Text.Trim() != _activeQuery) return; _results.Clear(); _empty.Text = message; RenderResults(); });
+                    if (!_preview) SetupHotkeys();
+                }
+            };
             Closing += (s, e) => { if (!_exiting && !_preview) { e.Cancel = true; HideAnimated(); } };
             Closed += (s, e) => Cleanup();
             KeyDown += OnWindowKeyDown;
@@ -73,207 +100,239 @@ namespace Lazo
 
         private void BuildUi()
         {
-            if (_path != null && !File.Exists(_path)) _path = null;
-            Grid outer = new Grid { Margin = new Thickness(14) };
+            Grid outer = new Grid { Margin = new Thickness(9) };
             Content = outer;
             _shell = new Border { Background = Theme.ShellSurface(), BorderBrush = Theme.Line,
-                BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(Theme.IsGlass ? 26 : 13),
+                BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(Theme.IsGlass ? 24 : 13),
                 Effect = Theme.Shadow(), ClipToBounds = true, AllowDrop = true };
             outer.Children.Add(_shell);
-            _shell.DragEnter += OnDragEnter;
-            _shell.DragLeave += (s, e) => _fileCard.BorderBrush = Theme.Line;
-            _shell.Drop += OnDrop;
+            _shell.DragEnter += (s, e) => { e.Effects = HasOneFile(e.Data) ? DragDropEffects.Copy : DragDropEffects.None; e.Handled = true; };
+            _shell.Drop += (s, e) => { string[] paths = e.Data.GetData(DataFormats.FileDrop) as string[]; if (paths != null && paths.Length == 1) SelectFile(paths[0]); };
+            Grid layout = new Grid();
+            layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(64) });
+            layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1) });
+            layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(34) });
+            layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(45) });
+            _shell.Child = layout;
 
-            Grid backdrop = new Grid();
-            _shell.Child = backdrop;
-            if (Theme.IsGlass)
+            Grid header = new Grid { Margin = new Thickness(22, 0, 15, 0) };
+            header.ColumnDefinitions.Add(new ColumnDefinition());
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(74) });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(34) });
+            Grid searchHost = new Grid { Margin = new Thickness(0, 0, 8, 0) };
+            _search = new TextBox { Background = Brushes.Transparent, BorderThickness = new Thickness(0),
+                Foreground = Theme.Ink, FontFamily = Theme.Font, FontSize = 17,
+                VerticalContentAlignment = VerticalAlignment.Center, CaretBrush = Theme.Ink };
+            _placeholder = Theme.Text("Buscar archivos…", 17, Theme.Muted);
+            _placeholder.VerticalAlignment = VerticalAlignment.Center;
+            _placeholder.IsHitTestVisible = false;
+            searchHost.Children.Add(_search);
+            searchHost.Children.Add(_placeholder);
+            _search.TextChanged += (s, e) =>
             {
-                System.Windows.Shapes.Ellipse glow = new System.Windows.Shapes.Ellipse { Width = 420, Height = 310, IsHitTestVisible = false,
-                    HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
-                    Margin = new Thickness(0, -160, -150, 0), Opacity = 0.50 };
-                RadialGradientBrush light = new RadialGradientBrush();
-                light.GradientStops.Add(new GradientStop(Colors.White, 0));
-                light.GradientStops.Add(new GradientStop(Color.FromArgb(0, 255, 255, 255), 1));
-                glow.Fill = light;
-                backdrop.Children.Add(glow);
-            }
-
-            Grid main = new Grid { Margin = new Thickness(24, 20, 24, 20) };
-            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(48) });
-            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(84) });
-            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(54) });
-            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            main.RowDefinitions.Add(new RowDefinition { Height = new GridLength(78) });
-            backdrop.Children.Add(main);
-
-            Grid header = new Grid();
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(108) });
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(9) });
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
-            StackPanel brand = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-            brand.Children.Add(Theme.Text("Lazo", 19, Theme.Ink, FontWeights.Bold));
-            TextBlock tag = Theme.Text("  /  transferencia local", 10, Theme.Muted);
-            tag.VerticalAlignment = VerticalAlignment.Bottom;
-            tag.Margin = new Thickness(0, 0, 0, 3);
-            brand.Children.Add(tag);
-            header.Children.Add(brand);
-            Button switchTheme = Theme.Button(Theme.IsGlass ? "RAYCAST" : "VIDRIO", false);
-            switchTheme.MinHeight = 30;
-            switchTheme.FontSize = 10;
-            switchTheme.Click += (s, e) =>
+                _placeholder.Visibility = _search.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+                _searchDelay.Stop();
+                if (_search.Text.Trim().Length == 0)
+                {
+                    _results.Clear();
+                    _empty.Text = _manualPath == null ? "Escribe un nombre para buscar archivos." : "";
+                    RenderResults();
+                }
+                else
+                {
+                    _results.Clear();
+                    _empty.Text = "Buscando…";
+                    RenderResults();
+                    _searchDelay.Start();
+                }
+            };
+            header.Children.Add(searchHost);
+            Button theme = TextButton(Theme.IsGlass ? "Minimal" : "Vidrio");
+            theme.Click += (s, e) =>
             {
-                Guid selected = SelectedPeerId();
                 string query = _search.Text;
                 Theme.Toggle(!_preview);
                 BuildUi();
                 _search.Text = query;
-                FilterPeers(selected);
+                RenderResults();
                 Theme.Enter(_shell);
                 _search.Focus();
             };
-            Grid.SetColumn(switchTheme, 1); header.Children.Add(switchTheme);
-            Button close = Theme.Button("×", false);
-            close.MinHeight = 30;
-            close.Padding = new Thickness(0);
-            close.FontSize = 16;
+            Grid.SetColumn(theme, 1); header.Children.Add(theme);
+            Button close = TextButton("×");
+            close.FontSize = 22;
             close.Click += (s, e) => HideAnimated();
-            Grid.SetColumn(close, 3); header.Children.Add(close);
-            header.MouseLeftButtonDown += (s, e) => { if (e.ButtonState == MouseButtonState.Pressed && e.OriginalSource is TextBlock) DragMove(); };
-            main.Children.Add(header);
+            Grid.SetColumn(close, 2); header.Children.Add(close);
+            Grid.SetRow(header, 0); layout.Children.Add(header);
+            Border rule = new Border { Height = 1, Background = Theme.Line };
+            Grid.SetRow(rule, 1); layout.Children.Add(rule);
 
-            Grid file = new Grid();
-            file.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(44) });
-            file.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            file.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(108) });
-            TextBlock glyph = Theme.Text("↗", 28, Theme.Ink);
-            glyph.VerticalAlignment = VerticalAlignment.Center;
-            file.Children.Add(glyph);
-            StackPanel fileText = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-            _fileName = Theme.Text(_path == null ? "Arrastra un archivo" : Path.GetFileName(_path), 13, Theme.Ink, FontWeights.SemiBold);
-            _fileName.TextTrimming = TextTrimming.CharacterEllipsis;
-            _fileMeta = Theme.Text(_path == null ? "o selecciónalo para enviar" : FormatSize(new FileInfo(_path).Length), 10, Theme.Muted);
-            _fileMeta.Margin = new Thickness(0, 5, 0, 0);
-            fileText.Children.Add(_fileName); fileText.Children.Add(_fileMeta);
-            Grid.SetColumn(fileText, 1); file.Children.Add(fileText);
-            Button choose = Theme.Button("ELEGIR", false);
-            choose.MinHeight = 34;
-            choose.VerticalAlignment = VerticalAlignment.Center;
-            choose.FontSize = 10;
-            choose.Click += (s, e) => ChooseFile();
-            Grid.SetColumn(choose, 2); file.Children.Add(choose);
-            _fileCard = Theme.Card(file, new Thickness(14, 9, 14, 9));
-            _fileCard.Margin = new Thickness(0, 4, 0, 8);
-            Grid.SetRow(_fileCard, 1); main.Children.Add(_fileCard);
+            Grid heading = new Grid { Margin = new Thickness(22, 0, 23, 0) };
+            heading.ColumnDefinitions.Add(new ColumnDefinition());
+            heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            TextBlock title = Theme.Text("Archivos", 11, Theme.Muted);
+            title.VerticalAlignment = VerticalAlignment.Center;
+            heading.Children.Add(title);
+            _count = Theme.Text("", 11, Theme.Muted);
+            _count.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetColumn(_count, 1); heading.Children.Add(_count);
+            Grid.SetRow(heading, 2); layout.Children.Add(heading);
 
-            Grid searchGrid = new Grid { Margin = new Thickness(0, 7, 0, 7) };
-            Border searchCard = Theme.Card(searchGrid, new Thickness(14, 0, 14, 0));
-            Grid.SetRow(searchCard, 2); main.Children.Add(searchCard);
-            searchGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(27) });
-            searchGrid.ColumnDefinitions.Add(new ColumnDefinition());
-            TextBlock searchIcon = Theme.Text("⌕", 22, Theme.Muted);
-            searchIcon.VerticalAlignment = VerticalAlignment.Center;
-            searchGrid.Children.Add(searchIcon);
-            Grid searchContent = new Grid();
-            _search = new TextBox { Background = Brushes.Transparent, BorderThickness = new Thickness(0),
-                Foreground = Theme.Ink, FontFamily = Theme.Font, FontSize = 12,
-                VerticalContentAlignment = VerticalAlignment.Center, CaretBrush = Theme.Ink };
-            _searchHint = Theme.Text("Buscar equipo por nombre o IP…", 12, Theme.Muted);
-            _searchHint.VerticalAlignment = VerticalAlignment.Center;
-            _searchHint.IsHitTestVisible = false;
-            searchContent.Children.Add(_search);
-            searchContent.Children.Add(_searchHint);
-            _search.TextChanged += (s, e) =>
-            {
-                _searchHint.Visibility = _search.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
-                FilterPeers(Guid.Empty);
-            };
-            Grid.SetColumn(searchContent, 1); searchGrid.Children.Add(searchContent);
-
-            Grid peersArea = new Grid();
-            peersArea.RowDefinitions.Add(new RowDefinition { Height = new GridLength(36) });
-            peersArea.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            Grid peerHeading = new Grid();
-            peerHeading.ColumnDefinitions.Add(new ColumnDefinition());
-            peerHeading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            TextBlock caption = Theme.Text("EQUIPOS CERCANOS", 10, Theme.Muted, FontWeights.SemiBold);
-            caption.VerticalAlignment = VerticalAlignment.Center;
-            peerHeading.Children.Add(caption);
-            _peerCount = Theme.Text("0 EN LÍNEA", 10, Theme.Muted);
-            _peerCount.VerticalAlignment = VerticalAlignment.Center;
-            Grid.SetColumn(_peerCount, 1); peerHeading.Children.Add(_peerCount);
-            peersArea.Children.Add(peerHeading);
-            Grid listArea = new Grid();
-            _peerList = new ListBox { Background = Brushes.Transparent, BorderThickness = new Thickness(0),
-                HorizontalContentAlignment = HorizontalAlignment.Stretch };
-            ScrollViewer.SetVerticalScrollBarVisibility(_peerList, ScrollBarVisibility.Auto);
-            Style itemStyle = new Style(typeof(ListBoxItem));
-            itemStyle.Setters.Add(new Setter(ListBoxItem.PaddingProperty, new Thickness(0)));
-            itemStyle.Setters.Add(new Setter(ListBoxItem.MarginProperty, new Thickness(0, 0, 0, 5)));
-            itemStyle.Setters.Add(new Setter(ListBoxItem.BackgroundProperty, Brushes.Transparent));
-            itemStyle.Setters.Add(new Setter(ListBoxItem.BorderThicknessProperty, new Thickness(0)));
-            itemStyle.Setters.Add(new Setter(ListBoxItem.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
-            ControlTemplate itemTemplate = new ControlTemplate(typeof(ListBoxItem));
-            FrameworkElementFactory presenter = new FrameworkElementFactory(typeof(ContentPresenter));
-            presenter.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
-            itemTemplate.VisualTree = presenter;
-            itemStyle.Setters.Add(new Setter(ListBoxItem.TemplateProperty, itemTemplate));
-            _peerList.ItemContainerStyle = itemStyle;
-            _peerList.SelectionChanged += (s, e) => { RefreshPeerStyles(); UpdateSendEnabled(); };
-            _peerList.MouseDoubleClick += (s, e) => { if (_send.IsEnabled) SendClicked(this, null); };
-            listArea.Children.Add(_peerList);
-            _emptyPeers = Theme.Text("Buscando equipos…\n\nAbre Lazo en otro equipo de esta red.", 12, Theme.Muted);
-            _emptyPeers.TextAlignment = TextAlignment.Center;
-            _emptyPeers.VerticalAlignment = VerticalAlignment.Center;
-            _emptyPeers.HorizontalAlignment = HorizontalAlignment.Center;
-            _emptyPeers.IsHitTestVisible = false;
-            listArea.Children.Add(_emptyPeers);
-            Grid.SetRow(listArea, 1); peersArea.Children.Add(listArea);
-            Grid.SetRow(peersArea, 3); main.Children.Add(peersArea);
+            Grid resultsArea = new Grid { Margin = new Thickness(8, 0, 8, 0) };
+            ScrollViewer scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+            _resultList = new StackPanel();
+            scroll.Content = _resultList;
+            resultsArea.Children.Add(scroll);
+            _empty = Theme.Text("Escribe un nombre para buscar archivos.", 12, Theme.Muted);
+            _empty.HorizontalAlignment = HorizontalAlignment.Center;
+            _empty.VerticalAlignment = VerticalAlignment.Center;
+            _empty.IsHitTestVisible = false;
+            resultsArea.Children.Add(_empty);
+            Grid.SetRow(resultsArea, 3); layout.Children.Add(resultsArea);
 
             Grid footer = new Grid();
-            footer.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1) });
-            footer.RowDefinitions.Add(new RowDefinition());
-            footer.Children.Add(new Border { Height = 1, Background = Theme.Line });
-            Grid bottom = new Grid { Margin = new Thickness(0, 12, 0, 0) };
-            bottom.ColumnDefinitions.Add(new ColumnDefinition());
-            bottom.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(132) });
-            StackPanel info = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-            _status = Theme.Text(_path == null ? "Listo para enviar" : "Elige un equipo", 11, Theme.Ink);
+            footer.ColumnDefinitions.Add(new ColumnDefinition());
+            footer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(160) });
+            footer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(124) });
+            Border footerRule = new Border { Height = 1, Background = Theme.Line, VerticalAlignment = VerticalAlignment.Top };
+            Grid.SetColumnSpan(footerRule, 3);
+            footer.Children.Add(footerRule);
+            _status = Theme.Text("Listo para enviar", 11, Theme.Muted);
+            _status.VerticalAlignment = VerticalAlignment.Center;
+            _status.Margin = new Thickness(21, 0, 0, 0);
             _status.TextTrimming = TextTrimming.CharacterEllipsis;
-            info.Children.Add(_status);
-            TextBlock hint = Theme.Text("ALT × 2   ·   CTRL + ALT + L", 9, Theme.Muted);
-            hint.Margin = new Thickness(0, 5, 0, 0);
-            info.Children.Add(hint);
-            Border progressTrack = new Border { Height = 2, Background = Theme.Line, Margin = new Thickness(0, 7, 16, 0) };
-            Grid track = new Grid { ClipToBounds = true };
+            footer.Children.Add(_status);
+            Button choose = TextButton("Elegir archivo  Ctrl+O");
+            choose.Click += (s, e) => ChooseFile();
+            Grid.SetColumn(choose, 1); footer.Children.Add(choose);
+            TextBlock devices = Theme.Text("", 11, Theme.Muted);
+            devices.VerticalAlignment = VerticalAlignment.Center;
+            devices.HorizontalAlignment = HorizontalAlignment.Right;
+            devices.Margin = new Thickness(0, 0, 20, 0);
+            Grid.SetColumn(devices, 2); footer.Children.Add(devices);
+            _count.Tag = devices;
+            Border progressTrack = new Border { Height = 2, Background = Theme.Line,
+                VerticalAlignment = VerticalAlignment.Bottom };
+            Grid.SetColumnSpan(progressTrack, 3);
             _progressScale = new ScaleTransform(0, 1);
-            track.Children.Add(new Border { Background = Theme.Ink, RenderTransform = _progressScale, RenderTransformOrigin = new Point(0, 0.5) });
-            progressTrack.Child = track;
-            info.Children.Add(progressTrack);
-            bottom.Children.Add(info);
-            _send = Theme.Button("ENVIAR  →", true);
-            _send.MinHeight = 42;
-            _send.Click += SendClicked;
-            _send.IsEnabled = false;
-            Grid.SetColumn(_send, 1); bottom.Children.Add(_send);
-            Grid.SetRow(bottom, 1); footer.Children.Add(bottom);
-            Grid.SetRow(footer, 4); main.Children.Add(footer);
-            FilterPeers(Guid.Empty);
+            progressTrack.Child = new Border { Background = Theme.Ink, RenderTransform = _progressScale,
+                RenderTransformOrigin = new Point(0, 0.5) };
+            footer.Children.Add(progressTrack);
+            Grid.SetRow(footer, 4); layout.Children.Add(footer);
+            RenderResults();
         }
 
-        private void OnDragEnter(object sender, DragEventArgs e)
+        private Button TextButton(string label)
         {
-            e.Effects = HasOneFile(e.Data) ? DragDropEffects.Copy : DragDropEffects.None;
-            _fileCard.BorderBrush = Theme.Ink;
-            e.Handled = true;
+            Button button = new Button { Content = label, FontFamily = Theme.Font, FontSize = 11,
+                Foreground = Theme.Muted, Background = Brushes.Transparent, BorderThickness = new Thickness(0),
+                Cursor = Cursors.Hand, Padding = new Thickness(2) };
+            button.Template = new ControlTemplate(typeof(Button)) { VisualTree = ButtonPresenter() };
+            return button;
         }
 
-        private void OnDrop(object sender, DragEventArgs e)
+        private static FrameworkElementFactory ButtonPresenter()
         {
-            _fileCard.BorderBrush = Theme.Line;
-            string[] paths = e.Data.GetData(DataFormats.FileDrop) as string[];
-            if (paths != null && paths.Length == 1) SelectFile(paths[0]);
+            FrameworkElementFactory content = new FrameworkElementFactory(typeof(ContentPresenter));
+            content.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            content.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+            return content;
+        }
+
+        private void RunSearch()
+        {
+            if (_everything == null) return;
+            string query = _search.Text.Trim();
+            if (query.Length > 0) { _activeQuery = query; _everything.Search(query); }
+        }
+
+        private void RenderResults()
+        {
+            if (_resultList == null) return;
+            _resultList.Children.Clear();
+            List<string> paths = _search.Text.Trim().Length == 0
+                ? (_manualPath == null ? new List<string>() : new List<string> { _manualPath })
+                : _results.ToList();
+            for (int i = 0; i < paths.Count; i++) _resultList.Children.Add(FileRow(paths[i], i));
+            _empty.Visibility = paths.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            _count.Text = paths.Count > 0 ? paths.Count + (paths.Count == 1 ? " resultado" : " resultados") : "";
+            TextBlock devices = _count.Tag as TextBlock;
+            if (devices != null) devices.Text = _peers.Count + (_peers.Count == 1 ? " equipo" : " equipos");
+        }
+
+        private Border FileRow(string path, int index)
+        {
+            Grid grid = new Grid { Margin = new Thickness(12, 0, 7, 0) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition());
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            StackPanel labels = new StackPanel { Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center };
+            TextBlock name = Theme.Text(Path.GetFileName(path), 12, Theme.Ink, FontWeights.Medium);
+            name.TextTrimming = TextTrimming.CharacterEllipsis;
+            name.MaxWidth = 240;
+            labels.Children.Add(name);
+            TextBlock location = Theme.Text("   " + Path.GetDirectoryName(path), 11, Theme.Muted);
+            location.TextTrimming = TextTrimming.CharacterEllipsis;
+            location.MaxWidth = 245;
+            labels.Children.Add(location);
+            grid.Children.Add(labels);
+            StackPanel people = new StackPanel { Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center };
+            foreach (Peer peer in _peers)
+            {
+                Button person = Avatar(peer);
+                person.ToolTip = "Enviar a " + peer.Name + (peer.Address == null ? "" : " · " + peer.Address);
+                person.Click += async (s, e) => await SendToAsync(path, peer);
+                people.Children.Add(person);
+            }
+            ScrollViewer peopleScroll = new ScrollViewer { Content = people, MaxWidth = 220,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled };
+            Grid.SetColumn(peopleScroll, 1); grid.Children.Add(peopleScroll);
+            Border row = new Border { Child = grid, Height = 44,
+                Background = index == _selectedRow ? Theme.SoftSurface : Brushes.Transparent,
+                CornerRadius = new CornerRadius(6), Margin = new Thickness(0, 1, 0, 1) };
+            row.MouseLeftButtonDown += (s, e) => { _selectedRow = index; HighlightRows(); };
+            row.MouseEnter += (s, e) => { if (index != _selectedRow) row.Background = Theme.SoftSurface; };
+            row.MouseLeave += (s, e) => { if (index != _selectedRow) row.Background = Brushes.Transparent; };
+            return row;
+        }
+
+        private Button Avatar(Peer peer)
+        {
+            Button button = new Button { Content = Initials(peer.Name), Width = 30, Height = 30,
+                Margin = new Thickness(3, 0, 0, 0), FontFamily = Theme.Font, FontSize = 10,
+                FontWeight = FontWeights.SemiBold, Foreground = Theme.Ink,
+                Background = Theme.AvatarSurface, BorderBrush = Theme.Line,
+                BorderThickness = new Thickness(1), Cursor = Cursors.Hand };
+            ControlTemplate template = new ControlTemplate(typeof(Button));
+            FrameworkElementFactory ellipse = new FrameworkElementFactory(typeof(Border));
+            ellipse.SetValue(Border.CornerRadiusProperty, new CornerRadius(15));
+            ellipse.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding("Background") { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
+            ellipse.SetBinding(Border.BorderBrushProperty, new System.Windows.Data.Binding("BorderBrush") { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
+            ellipse.SetBinding(Border.BorderThicknessProperty, new System.Windows.Data.Binding("BorderThickness") { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
+            ellipse.AppendChild(ButtonPresenter());
+            template.VisualTree = ellipse;
+            Trigger hover = new Trigger { Property = Button.IsMouseOverProperty, Value = true };
+            hover.Setters.Add(new Setter(Button.BackgroundProperty, Theme.AvatarHover));
+            template.Triggers.Add(hover);
+            button.Template = template;
+            return button;
+        }
+
+        internal static string Initials(string name)
+        {
+            string[] words = name.Split(new[] { ' ', '-', '_' }, StringSplitOptions.RemoveEmptyEntries);
+            if (words.Length >= 2) return (words[0].Substring(0, 1) + words[1].Substring(0, 1)).ToUpperInvariant();
+            return name.Length >= 2 ? name.Substring(0, 2).ToUpperInvariant() : name.ToUpperInvariant();
+        }
+
+        private void HighlightRows()
+        {
+            for (int i = 0; i < _resultList.Children.Count; i++)
+                ((Border)_resultList.Children[i]).Background = i == _selectedRow ? Theme.SoftSurface : Brushes.Transparent;
         }
 
         private static bool HasOneFile(System.Windows.IDataObject data)
@@ -291,14 +350,12 @@ namespace Lazo
         private void SelectFile(string path)
         {
             if (!File.Exists(path)) { _status.Text = "Selecciona un archivo válido."; return; }
-            FileInfo info = new FileInfo(path);
-            _path = path;
-            _fileName.Text = info.Name;
-            _fileMeta.Text = FormatSize(info.Length);
-            _fileCard.BorderBrush = Theme.Ink;
-            _status.Text = "Elige un equipo";
-            _progressScale.ScaleX = 0;
-            UpdateSendEnabled();
+            _manualPath = path;
+            _search.Text = "";
+            _selectedRow = 0;
+            _empty.Text = "";
+            _status.Text = "Selecciona un destinatario";
+            RenderResults();
         }
 
         public static string FormatSize(long bytes)
@@ -313,93 +370,28 @@ namespace Lazo
 
         private void OnPeersChanged(List<Peer> peers)
         {
-            Dispatcher.BeginInvoke((Action)(() =>
-            {
-                Guid selected = SelectedPeerId();
-                _peers = peers;
-                FilterPeers(selected);
-            }));
+            Dispatcher.BeginInvoke((Action)(() => { _peers = peers; RenderResults(); }));
         }
 
-        private Guid SelectedPeerId()
+        private async Task SendToAsync(string path, Peer peer)
         {
-            ListBoxItem item = _peerList.SelectedItem as ListBoxItem;
-            return item == null ? Guid.Empty : ((Peer)item.Tag).Id;
-        }
-
-        private void FilterPeers(Guid preserve)
-        {
-            if (_peerList == null || _search == null) return;
-            string query = _search.Text.Trim();
-            _peerList.Items.Clear();
-            List<Peer> shown = _peers.Where(p => query.Length == 0 ||
-                p.Name.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                p.Address.ToString().IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
-            foreach (Peer peer in shown)
-            {
-                Grid row = new Grid();
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(34) });
-                row.ColumnDefinitions.Add(new ColumnDefinition());
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(18) });
-                TextBlock dot = Theme.Text(Theme.IsGlass ? "◯" : "●", 15, Theme.Ink);
-                dot.VerticalAlignment = VerticalAlignment.Center;
-                row.Children.Add(dot);
-                StackPanel labels = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-                labels.Children.Add(Theme.Text(peer.Name, 12, Theme.Ink, FontWeights.SemiBold));
-                labels.Children.Add(Theme.Text(peer.Address.ToString(), 10, Theme.Muted));
-                Grid.SetColumn(labels, 1); row.Children.Add(labels);
-                TextBlock arrow = Theme.Text("↵", 15, Theme.Muted);
-                arrow.VerticalAlignment = VerticalAlignment.Center;
-                Grid.SetColumn(arrow, 2); row.Children.Add(arrow);
-                Border card = Theme.Card(row, new Thickness(11, 6, 11, 6));
-                card.MinHeight = 50;
-                ListBoxItem item = new ListBoxItem { Content = card, Tag = peer };
-                _peerList.Items.Add(item);
-                if (peer.Id == preserve) _peerList.SelectedItem = item;
-            }
-            _peerCount.Text = _peers.Count + " EN LÍNEA";
-            _emptyPeers.Text = _peers.Count == 0 ? "Buscando equipos…\n\nAbre Lazo en otro equipo de esta red." : "No hay coincidencias.";
-            _emptyPeers.Visibility = shown.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-            RefreshPeerStyles();
-            UpdateSendEnabled();
-        }
-
-        private void RefreshPeerStyles()
-        {
-            foreach (ListBoxItem item in _peerList.Items)
-            {
-                Border card = (Border)item.Content;
-                card.BorderBrush = item.IsSelected ? Theme.Ink : Theme.Line;
-                card.Background = item.IsSelected ? Theme.SoftSurface : Theme.CardSurface;
-            }
-        }
-
-        private void UpdateSendEnabled()
-        {
-            if (_send != null) _send.IsEnabled = !_sending && _path != null && _peerList.SelectedItem != null;
-        }
-
-        private async void SendClicked(object sender, RoutedEventArgs e)
-        {
-            ListBoxItem item = _peerList.SelectedItem as ListBoxItem;
-            if (item == null || _path == null || !_send.IsEnabled) return;
-            Peer peer = (Peer)item.Tag;
+            if (_sending || _preview) return;
+            if (!File.Exists(path)) { _status.Text = "El archivo ya no existe."; return; }
             _sending = true;
-            _send.IsEnabled = false;
             _status.Text = "Esperando a " + peer.Name + "…";
             _progressScale.ScaleX = 0;
             try
             {
-                await _network.SendAsync(peer, _path, value => Dispatcher.BeginInvoke((Action)(() =>
+                await _network.SendAsync(peer, path, value => Dispatcher.BeginInvoke((Action)(() =>
                 {
-                    _status.Text = "Enviando  " + (value * 100).ToString("0") + "%";
+                    _status.Text = "Enviando " + (value * 100).ToString("0") + "% a " + peer.Name;
                     _progressScale.BeginAnimation(ScaleTransform.ScaleXProperty, Theme.Animation(_progressScale.ScaleX, value, 130));
                 })));
                 _status.Text = "Entregado a " + peer.Name;
                 _progressScale.BeginAnimation(ScaleTransform.ScaleXProperty, Theme.Animation(_progressScale.ScaleX, 1, 180));
             }
             catch (Exception ex) { _status.Text = ex.Message; }
-            finally { _sending = false; UpdateSendEnabled(); }
+            finally { _sending = false; }
         }
 
         private Task<bool> OnOfferReceived(Offer offer)
@@ -428,32 +420,27 @@ namespace Lazo
         {
             if (e.Key == Key.Escape) { HideAnimated(); e.Handled = true; }
             else if (e.Key == Key.O && Keyboard.Modifiers == ModifierKeys.Control) { ChooseFile(); e.Handled = true; }
-            else if (e.Key == Key.Down && _peerList.Items.Count > 0)
+            else if (e.Key == Key.Down && _resultList.Children.Count > 0)
             {
-                _peerList.SelectedIndex = Math.Min(_peerList.Items.Count - 1, _peerList.SelectedIndex + 1);
-                e.Handled = true;
+                _selectedRow = Math.Min(_resultList.Children.Count - 1, _selectedRow + 1);
+                HighlightRows(); e.Handled = true;
             }
-            else if (e.Key == Key.Up && _peerList.Items.Count > 0)
+            else if (e.Key == Key.Up && _resultList.Children.Count > 0)
             {
-                _peerList.SelectedIndex = Math.Max(0, _peerList.SelectedIndex - 1);
-                e.Handled = true;
+                _selectedRow = Math.Max(0, _selectedRow - 1);
+                HighlightRows(); e.Handled = true;
             }
-            else if (e.Key == Key.Enter && _send.IsEnabled) { SendClicked(this, null); e.Handled = true; }
         }
 
         private void SetupHotkeys()
         {
             _hotkeys = new Hotkeys(this, Toggle);
-            if (!_hotkeys.DoubleAltAvailable && !_hotkeys.AlternativeAvailable) _status.Text = "Atajos no disponibles; abre Lazo desde la bandeja.";
-            else if (!_hotkeys.DoubleAltAvailable) _status.Text = "Usa Ctrl+Alt+L para abrir Lazo.";
-            else if (!_hotkeys.AlternativeAvailable) _status.Text = "Usa doble Alt para abrir Lazo.";
+            if (!_hotkeys.DoubleAltAvailable && !_hotkeys.AlternativeAvailable) _status.Text = "Abre Lazo desde la bandeja.";
+            else if (!_hotkeys.DoubleAltAvailable) _status.Text = "Ctrl+Alt+L para abrir Lazo.";
+            else if (!_hotkeys.AlternativeAvailable) _status.Text = "Doble Alt para abrir Lazo.";
         }
 
-        private void Toggle()
-        {
-            if (IsVisible) HideAnimated(); else ShowAnimated();
-        }
-
+        private void Toggle() { if (IsVisible) HideAnimated(); else ShowAnimated(); }
         public void ActivateFromElsewhere() { ShowAnimated(); }
 
         private void ShowAnimated()
@@ -477,8 +464,7 @@ namespace Lazo
         private void SetupTray()
         {
             _tray = new System.Windows.Forms.NotifyIcon();
-            _tray.Icon = System.Drawing.Icon.ExtractAssociatedIcon(
-                System.Reflection.Assembly.GetExecutingAssembly().Location);
+            _tray.Icon = System.Drawing.Icon.ExtractAssociatedIcon(System.Reflection.Assembly.GetExecutingAssembly().Location);
             _tray.Text = "Lazo · transferencia local";
             _tray.Visible = true;
             _tray.DoubleClick += (s, e) => Dispatcher.BeginInvoke((Action)ShowAnimated);
@@ -490,10 +476,11 @@ namespace Lazo
 
         private void Cleanup()
         {
+            _searchDelay.Stop();
+            if (_everything != null) _everything.Dispose();
             if (_hotkeys != null) _hotkeys.Dispose();
             if (_tray != null) { _tray.Visible = false; _tray.Dispose(); }
             _network.Dispose();
         }
-
     }
 }

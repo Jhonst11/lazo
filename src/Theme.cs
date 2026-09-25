@@ -48,19 +48,21 @@ namespace Lazo
             return new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
         }
 
-        public static Brush Ink { get { return Color(IsGlass ? "#222222" : "#F4F4F4"); } }
-        public static Brush Muted { get { return Color(IsGlass ? "#646464" : "#A6A6A9"); } }
-        public static Brush Line { get { return Color(IsGlass ? "#BFFFFFFF" : "#3D3D42"); } }
-        public static Brush CardSurface { get { return Color(IsGlass ? "#B8FFFFFF" : "#252528"); } }
-        public static Brush SoftSurface { get { return Color(IsGlass ? "#80FFFFFF" : "#2D2D31"); } }
+        public static Brush Ink { get { return Color("#242424"); } }
+        public static Brush Muted { get { return Color(IsGlass ? "#646464" : "#777777"); } }
+        public static Brush Line { get { return Color(IsGlass ? "#BFFFFFFF" : "#D3D3D3"); } }
+        public static Brush CardSurface { get { return Color(IsGlass ? "#B8FFFFFF" : "#F4F4F4"); } }
+        public static Brush SoftSurface { get { return Color(IsGlass ? "#80FFFFFF" : "#DEDEDE"); } }
+        public static Brush AvatarSurface { get { return Color(IsGlass ? "#B0FFFFFF" : "#ECECEC"); } }
+        public static Brush AvatarHover { get { return Color(IsGlass ? "#E5FFFFFF" : "#CECECE"); } }
         public static Brush Primary { get { return Color(IsGlass ? "#252525" : "#F2F2F2"); } }
         public static Brush PrimaryText { get { return Color(IsGlass ? "#FFFFFF" : "#19191B"); } }
-        public static FontFamily Font { get { return IsGlass ? Sans : Mono; } }
+        public static FontFamily Font { get { return Sans; } }
         public static CornerRadius Radius { get { return new CornerRadius(IsGlass ? 20 : 10); } }
 
         public static Brush ShellSurface()
         {
-            if (!IsGlass) return Color("#1B1B1E");
+            if (!IsGlass) return Color("#F1F1F1");
             LinearGradientBrush gradient = new LinearGradientBrush();
             gradient.StartPoint = new Point(0, 0);
             gradient.EndPoint = new Point(1, 1);

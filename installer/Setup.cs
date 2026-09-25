@@ -9,8 +9,8 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 [assembly: AssemblyTitle("Lazo Installer")]
-[assembly: AssemblyVersion("0.2.0.0")]
-[assembly: AssemblyFileVersion("0.2.0.0")]
+[assembly: AssemblyVersion("0.3.0.0")]
+[assembly: AssemblyFileVersion("0.3.0.0")]
 
 namespace LazoInstaller
 {
@@ -60,7 +60,7 @@ namespace LazoInstaller
                 Text = "TRANSFERENCIA\nLOCAL", ForeColor = Color.FromArgb(175, 175, 175),
                 Font = new Font("Consolas", 8F) });
             rail.Controls.Add(new Label { Left = 25, Top = 300, Width = 120, Height = 20,
-                Text = "VERSIÓN 0.2.0", ForeColor = Color.FromArgb(175, 175, 175),
+                Text = "VERSIÓN 0.3.0", ForeColor = Color.FromArgb(175, 175, 175),
                 Font = new Font("Consolas", 8F) });
 
             Controls.Add(new Label { Left = 193, Top = 31, Width = 355, Height = 35,
@@ -203,7 +203,7 @@ namespace LazoInstaller
                 using (RegistryKey entry = root.CreateSubKey(UninstallKey))
                 {
                     entry.SetValue("DisplayName", "Lazo");
-                    entry.SetValue("DisplayVersion", "0.2.0");
+                    entry.SetValue("DisplayVersion", "0.3.0");
                     entry.SetValue("InstallLocation", folder);
                     entry.SetValue("DisplayIcon", app);
                     entry.SetValue("UninstallString", "\"" + uninstall + "\" /uninstall");
