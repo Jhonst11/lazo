@@ -14,10 +14,10 @@ La interfaz usa Bahnschrift con respaldo en Segoe UI. El contenido se recorta si
 
 ## Instalar y compartir
 
-Comparte **`dist/Lazo-Setup-0.4.8.exe`**. Es un solo archivo: contiene Lazo, crea accesos directos, registra la desinstalación en Configuración de Windows y configura dos reglas entrantes limitadas al perfil **Privado** y a la **subred local**. Solicita permisos de administrador. Puede iniciar con Windows si se deja marcada la opción del instalador.
+Comparte **`dist/Lazo-Setup-0.4.9.exe`**. Es un solo archivo: contiene Lazo, crea accesos directos, registra la desinstalación en Configuración de Windows y configura dos reglas entrantes limitadas al perfil **Privado** y a la **subred local**. Solicita permisos de administrador. Puede iniciar con Windows si se deja marcada la opción del instalador.
 
 1. Cierra cualquier copia anterior de Lazo desde el icono de la bandeja.
-2. Ejecuta `Lazo-Setup-0.4.8.exe` y acepta el aviso de Windows.
+2. Ejecuta `Lazo-Setup-0.4.9.exe` y acepta el aviso de Windows.
 3. Abre Lazo desde el menú Inicio. Repite la instalación en el otro equipo.
 4. Asegúrate de que ambos equipos estén en una red marcada como **Privada** en Windows.
 
@@ -30,7 +30,7 @@ También puede generarse un paquete portable con `scripts/package.ps1`, pero el 
 1. Abre la ventana con doble Alt izquierdo o `Ctrl+Alt+L`.
 2. En Minimal, escribe parte del nombre. Lazo consulta el índice local de [Everything](https://www.voidtools.com/support/everything/sdk/ipc/), si está abierto en ese equipo. Muestra hasta 24 archivos por búsqueda. También puedes arrastrar un archivo o usar `Ctrl+O`, incluso sin Everything. En Standard, pulsa el equipo para elegir uno o varios archivos, o arrastra varios desde el Explorador hasta su ícono: salen a la vez.
 3. En Minimal, pulsa las iniciales del destinatario junto al archivo. En Standard, el archivo elegido o soltado se envía a ese equipo. **Esa acción inicia el envío inmediatamente**.
-4. En el receptor aparece una alerta abajo a la derecha para aceptar o rechazar. Si el archivo es una imagen, incluye un previo. La solicitud caduca tras 90 segundos.
+4. En el receptor aparece una alerta abajo a la derecha. Si llegan varios archivos del mismo equipo, se agrupan y se aceptan todos de una vez. Si el archivo es una imagen, incluye un previo. La solicitud caduca tras 90 segundos.
 5. El archivo aceptado se guarda en `Descargas\Lazo`. Se verifica con SHA-256 antes de conservarlo; la alerta se repliega al terminar.
 
 Cerrar la ventana principal la oculta en la bandeja. **Salir** en el menú de la bandeja detiene Lazo.

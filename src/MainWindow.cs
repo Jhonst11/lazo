@@ -1215,7 +1215,15 @@ namespace Lazo
             TaskCompletionSource<bool> response = new TaskCompletionSource<bool>();
             Dispatcher.BeginInvoke((Action)(() =>
             {
-                ReceiveWindow window = new ReceiveWindow(offer, accept => response.TrySetResult(accept));
+                ReceiveWindow window = null;
+                for (int i = 0; i < _inbox.Count; i++) if (_inbox[i].CanAbsorb(offer)) window = _inbox[i];
+                if (window != null)
+                {
+                    window.Add(offer, accept => response.TrySetResult(accept));
+                    StackInbox();
+                    return;
+                }
+                window = new ReceiveWindow(offer, accept => response.TrySetResult(accept));
                 window.Closed += (s, e) => { _inbox.Remove(window); StackInbox(); };
                 _inbox.Add(window);
                 window.Show();
@@ -1231,18 +1239,18 @@ namespace Lazo
 
         private ReceiveWindow Inbox(Guid id)
         {
-            for (int i = 0; i < _inbox.Count; i++) if (_inbox[i].OfferId == id) return _inbox[i];
+            for (int i = 0; i < _inbox.Count; i++) if (_inbox[i].Contains(id)) return _inbox[i];
             return null;
         }
 
         private void OnReceiveProgress(Guid id, double value)
         {
-            Dispatcher.BeginInvoke((Action)(() => { ReceiveWindow window = Inbox(id); if (window != null) window.SetProgress(value); }));
+            Dispatcher.BeginInvoke((Action)(() => { ReceiveWindow window = Inbox(id); if (window != null) window.SetFileProgress(id, value); }));
         }
 
         private void OnReceiveFinished(Guid id, string message, string path)
         {
-            Dispatcher.BeginInvoke((Action)(() => { ReceiveWindow window = Inbox(id); if (window != null) window.Finish(message, path); }));
+            Dispatcher.BeginInvoke((Action)(() => { ReceiveWindow window = Inbox(id); if (window != null) window.FinishFile(id, message, path); }));
         }
 
         private void OnWindowKeyDown(object sender, KeyEventArgs e)
