@@ -52,6 +52,8 @@ namespace Lazo
         private bool _animating;
         private int _activeSends;
         private bool _settingsOpen;
+        private bool _historyOpen;
+        private Border _historyCard;
         private bool _holding;
         private DateTime _shownUtc;
         private System.Windows.Forms.Screen _launcherScreen = System.Windows.Forms.Screen.FromPoint(System.Windows.Forms.Cursor.Position);
@@ -132,12 +134,7 @@ namespace Lazo
                 }
             };
             Closing += (s, e) => { if (!_exiting && !_preview) { e.Cancel = true; HideAnimated(); } };
-            Deactivated += (s, e) =>
-            {
-                if (_holding || _exiting || _animating || _preview || !IsVisible) return;
-                if ((DateTime.UtcNow - _shownUtc).TotalMilliseconds < 280) return;
-                HideAnimated();
-            };
+            
             Closed += (s, e) => Cleanup();
             KeyDown += OnWindowKeyDown;
             if (!_preview)
@@ -219,20 +216,36 @@ namespace Lazo
             Button gear = IconButton("\uE713", () =>
             {
                 _settingsOpen = !_settingsOpen;
+                if (_settingsOpen) _historyOpen = false;
                 SyncChrome();
             }, true);
             gear.HorizontalAlignment = HorizontalAlignment.Right;
             gear.VerticalAlignment = VerticalAlignment.Top;
             gear.Margin = new Thickness(0, 6, 8, 0);
             overlay.Children.Add(gear);
-            if (!Theme.IsMinimal)
+            Button close = IconButton("×", HideAnimated, false);
+            close.HorizontalAlignment = HorizontalAlignment.Right;
+            close.VerticalAlignment = VerticalAlignment.Top;
+            close.Margin = new Thickness(0, 6, 40, 0);
+            overlay.Children.Add(close);
+            Button history = IconButton("\uE81C", () =>
             {
-                Button close = IconButton("×", HideAnimated, false);
-                close.HorizontalAlignment = HorizontalAlignment.Right;
-                close.VerticalAlignment = VerticalAlignment.Top;
-                close.Margin = new Thickness(0, 6, 42, 0);
-                overlay.Children.Add(close);
-            }
+                _historyOpen = !_historyOpen;
+                if (_historyOpen) _settingsOpen = false;
+                SyncChrome();
+            }, true);
+            history.HorizontalAlignment = HorizontalAlignment.Right;
+            history.VerticalAlignment = VerticalAlignment.Top;
+            history.Margin = new Thickness(0, 6, 72, 0);
+            history.ToolTip = "Historial";
+            Panel.SetZIndex(gear, 2);
+            Panel.SetZIndex(close, 2);
+            Panel.SetZIndex(history, 2);
+            overlay.Children.Add(history);
+            _historyCard = HistoryCard();
+            _historyCard.Visibility = _historyOpen ? Visibility.Visible : Visibility.Collapsed;
+            _historyCard.MouseLeftButtonDown += (s, e) => e.Handled = true;
+            overlay.Children.Add(_historyCard);
             _progressScale = new ScaleTransform(0, 1);
             Border progress = new Border
             {
@@ -262,7 +275,7 @@ namespace Lazo
             _resultsRow = new RowDefinition { Height = showResults ? new GridLength(1, GridUnitType.Star) : new GridLength(0) };
             layout.RowDefinitions.Add(_resultsRow);
 
-            Grid heading = new Grid { Margin = new Thickness(16, 7, 44, 0) };
+            Grid heading = new Grid { Margin = new Thickness(16, 7, 108, 0) };
             heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
             heading.ColumnDefinitions.Add(new ColumnDefinition());
             TextBlock wordmark = Theme.Text("L A Z O", 10, Theme.Muted, FontWeights.SemiBold);
@@ -718,6 +731,11 @@ namespace Lazo
         {
             if (_settingsCard != null)
                 _settingsCard.Visibility = _settingsOpen ? Visibility.Visible : Visibility.Collapsed;
+            if (_historyCard != null)
+            {
+                if (_historyOpen) _historyCard.Child = HistoryList();
+                _historyCard.Visibility = _historyOpen ? Visibility.Visible : Visibility.Collapsed;
+            }
             if (_resultsRow != null && Theme.IsMinimal)
                 _resultsRow.Height = HasResults() ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
             ApplySize(false);
@@ -744,10 +762,15 @@ namespace Lazo
                     width = 700;
                     height = 480;
                 }
-                if (_settingsOpen)
+if (_settingsOpen)
                 {
                     width = Math.Max(width, 360);
-                    height = Math.Max(height, 420);
+                    height = Math.Max(height, 560);
+                }
+                else if (_historyOpen)
+                {
+                    width = Math.Max(width, 320);
+                    height = Math.Max(height, 280);
                 }
             }
             else if (Theme.IsMinimal)
@@ -757,7 +780,8 @@ namespace Lazo
                 if (results) height = 440;
                 else if (_settingsOpen) height = 420;
                 else height = 104;
-                if (_settingsOpen) width = 360;
+                if (_settingsOpen || _historyOpen) width = 360;
+                if (_historyOpen && !results && !_settingsOpen) height = 280;
             }
             else
             {
@@ -1036,18 +1060,87 @@ namespace Lazo
 
         private Border Presence(Peer peer)
         {
-            return new Border
+            Border dot = new Border
             {
-                Width = 18,
-                Height = 18,
+                Width = 22,
+                Height = 22,
                 Margin = new Thickness(0, 0, 4, 0),
-                CornerRadius = new CornerRadius(9),
+                CornerRadius = new CornerRadius(11),
                 Background = Theme.AvatarSurface,
                 BorderBrush = Theme.Line,
                 BorderThickness = new Thickness(1),
-                ToolTip = peer.Name,
-                Child = PhotoContent(peer.Photo, peer.Name, 16)
+                ToolTip = "Soltar en " + peer.Name,
+                AllowDrop = true,
+                Child = PhotoContent(peer.Photo, peer.Name, 20)
             };
+            dot.DragOver += (s, e) =>
+            {
+                e.Effects = HasFiles(e.Data) ? DragDropEffects.Copy : DragDropEffects.None;
+                e.Handled = true;
+                dot.Background = HasFiles(e.Data) ? Theme.AvatarHover : Theme.AvatarSurface;
+            };
+            dot.DragLeave += (s, e) => dot.Background = Theme.AvatarSurface;
+            dot.Drop += (s, e) =>
+            {
+                dot.Background = Theme.AvatarSurface;
+                e.Handled = true;
+                SendFiles(ExistingFiles(e.Data.GetData(DataFormats.FileDrop) as string[]), peer);
+            };
+            return dot;
+        }
+
+        private Border HistoryCard()
+        {
+            return new Border
+            {
+                Background = Theme.CardSurface,
+                BorderBrush = Theme.Line,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(12, 10, 12, 8),
+                Width = 280,
+                MaxHeight = 220,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 40, 8, 0),
+                Child = HistoryList()
+            };
+        }
+
+        private UIElement HistoryList()
+        {
+            StackPanel panel = new StackPanel();
+            TextBlock title = Theme.Text("Historial", 11, Theme.Muted);
+            panel.Children.Add(title);
+            string[] rows = TransferLog.Recent();
+            if (rows.Length == 0)
+            {
+                TextBlock empty = Theme.Text("Sin transferencias", 12, Theme.Muted);
+                empty.Margin = new Thickness(0, 10, 0, 4);
+                panel.Children.Add(empty);
+                return panel;
+            }
+            foreach (string row in rows)
+            {
+                string[] parts = row.Split('|');
+                if (parts.Length < 4) continue;
+                string mark = parts[1] == "in" ? "↓" : "↑";
+                TextBlock line = Theme.Text(mark + "  " + parts[3], 12, Theme.Ink);
+                line.TextTrimming = TextTrimming.CharacterEllipsis;
+                line.Margin = new Thickness(0, 8, 0, 0);
+                TextBlock meta = Theme.Text(parts[2] + "   " + parts[0].Substring(Math.Max(0, parts[0].Length - 5)), 10, Theme.Muted);
+                meta.Margin = new Thickness(16, 0, 0, 0);
+                panel.Children.Add(line);
+                panel.Children.Add(meta);
+            }
+            ScrollViewer scroll = new ScrollViewer
+            {
+                Content = panel,
+                MaxHeight = 190,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+            };
+            return scroll;
         }
 
         private void RefreshDots()
@@ -1184,6 +1277,7 @@ namespace Lazo
                     UpdateSendStatus(Path.GetFileName(path), value);
                 })));
                 UpdateSendStatus(Path.GetFileName(path), 1);
+                TransferLog.Add("out", peer.Name, Path.GetFileName(path));
             }
             catch (Exception ex) { SetStatus(ex.Message); }
             finally
@@ -1250,7 +1344,12 @@ namespace Lazo
 
         private void OnReceiveFinished(Guid id, string message, string path)
         {
-            Dispatcher.BeginInvoke((Action)(() => { ReceiveWindow window = Inbox(id); if (window != null) window.FinishFile(id, message, path); }));
+            Dispatcher.BeginInvoke((Action)(() =>
+            {
+                ReceiveWindow window = Inbox(id);
+                if (window != null) window.FinishFile(id, message, path);
+                if (!string.IsNullOrEmpty(path) && window != null) TransferLog.Add("in", window.PeerName, Path.GetFileName(path));
+            }));
         }
 
         private void OnWindowKeyDown(object sender, KeyEventArgs e)
@@ -1334,6 +1433,7 @@ namespace Lazo
         private void ResetHome()
         {
             _settingsOpen = false;
+            _historyOpen = false;
             _picked = null;
             _manualFiles.Clear();
             _results.Clear();

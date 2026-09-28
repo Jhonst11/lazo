@@ -37,6 +37,7 @@ namespace Lazo
         private bool _takeAll;
         private bool _closing;
         public Guid OfferId { get; private set; }
+        public string PeerName { get { return _sender; } }
 
         public ReceiveWindow(Offer offer, Action<bool> respond)
         {
