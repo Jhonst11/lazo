@@ -544,6 +544,25 @@ namespace Lazo
             updates.Checked += (s, e) => { Updater.Set(true, !_preview); if (!_preview) Updater.CheckInBackground(text => Dispatcher.BeginInvoke((Action)(() => SetStatus(text))), () => Dispatcher.BeginInvoke((Action)(() => { _exiting = true; Application.Current.Shutdown(); }))); };
             updates.Unchecked += (s, e) => Updater.Set(false, !_preview);
             panel.Children.Add(updates);
+            Button checkUpdates = Theme.Button("Verificar actualizaciones", false);
+            checkUpdates.HorizontalAlignment = HorizontalAlignment.Left;
+            checkUpdates.Margin = new Thickness(0, 8, 0, 0);
+            checkUpdates.MinHeight = 30;
+            TextBlock updateState = Theme.Text("", 11, Theme.Muted);
+            updateState.Margin = new Thickness(0, 4, 0, 0);
+            checkUpdates.Click += (s, e) =>
+            {
+                if (_preview) return;
+                checkUpdates.IsEnabled = false;
+                Updater.Check(text => Dispatcher.BeginInvoke((Action)(() =>
+                {
+                    updateState.Text = text;
+                    SetStatus(text);
+                    if (text != "Buscando actualizaciones…" && text != "Instalando actualización…") checkUpdates.IsEnabled = true;
+                })), () => Dispatcher.BeginInvoke((Action)(() => { _exiting = true; Application.Current.Shutdown(); })));
+            };
+            panel.Children.Add(checkUpdates);
+            panel.Children.Add(updateState);
             ScrollViewer scroll = new ScrollViewer
             {
                 Content = panel,

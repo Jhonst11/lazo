@@ -38,12 +38,22 @@ namespace Lazo
         public static void CheckInBackground(Action<string> report, Action shutdown)
         {
             if (!Enabled) return;
+            Check(report, shutdown);
+        }
+
+        public static void Check(Action<string> report, Action shutdown)
+        {
             Task.Run(() =>
             {
                 try
                 {
+                    report("Buscando actualizaciones…");
                     string setup = DownloadNewer();
-                    if (setup == null) return;
+                    if (setup == null)
+                    {
+                        report("Lazo está actualizado.");
+                        return;
+                    }
                     report("Instalando actualización…");
                     Process.Start(new ProcessStartInfo
                     {
@@ -53,7 +63,10 @@ namespace Lazo
                     });
                     shutdown();
                 }
-                catch { }
+                catch
+                {
+                    report("No se pudo comprobar.");
+                }
             });
         }
 
