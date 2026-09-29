@@ -55,6 +55,7 @@ namespace Lazo
         private bool _historyOpen;
         private Border _historyCard;
         private bool _eyeCareOpen;
+        private bool _eyeCareAction;
         private Border _eyeCareCard;
         private EyeCareCardView _eyeCareView;
         private bool _holding;
@@ -876,21 +877,36 @@ if (_settingsOpen)
         {
             if (_resultList == null) return;
             _resultList.Children.Clear();
-            bool hasEyeAction = false;
-            if (_search != null && !string.IsNullOrEmpty(_search.Text))
-            {
-                string q = _search.Text.Trim().ToLowerInvariant();
-                if (q.Contains("descanso") || q.Contains("ojo") || q.Contains("pausa") || q.Contains("reloj"))
-                {
-                    _resultList.Children.Add(EyeCareActionRow());
-                    hasEyeAction = true;
-                }
-            }
+            _eyeCareAction = _search != null && IsEyeCareQuery(_search.Text);
+            if (_eyeCareAction && IsExactEyeCareQuery(_search.Text)) _selectedRow = 0;
+            if (_eyeCareAction) _resultList.Children.Add(EyeCareActionRow());
             List<string> paths = _search == null || _search.Text.Trim().Length == 0
                 ? _manualFiles.ToList()
                 : _results.ToList();
-            for (int i = 0; i < paths.Count; i++) _resultList.Children.Add(FileRow(paths[i], i));
-            if (_empty != null) _empty.Visibility = (paths.Count == 0 && !hasEyeAction) ? Visibility.Visible : Visibility.Collapsed;
+            int offset = _eyeCareAction ? 1 : 0;
+            for (int i = 0; i < paths.Count; i++) _resultList.Children.Add(FileRow(paths[i], i + offset));
+            if (_empty != null) _empty.Visibility = (paths.Count == 0 && !_eyeCareAction) ? Visibility.Visible : Visibility.Collapsed;
+            HighlightRows();
+        }
+
+        private static bool IsEyeCareQuery(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            string[] tokens = text.Trim().ToLowerInvariant().Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < tokens.Length; i++)
+            {
+                string token = tokens[i];
+                if (token == "descanso" || token == "ojo" || token == "ojos" || token == "pausa" || token == "reloj")
+                    return true;
+            }
+            return false;
+        }
+
+        private static bool IsExactEyeCareQuery(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            string token = text.Trim().ToLowerInvariant();
+            return token == "descanso" || token == "ojo" || token == "ojos" || token == "pausa" || token == "reloj";
         }
 
         private Border EyeCareActionRow()
@@ -1370,8 +1386,9 @@ if (_settingsOpen)
                 ? _manualFiles.ToList()
                 : _results.ToList();
             if (paths.Count == 0) return null;
-            if (_selectedRow < 0 || _selectedRow >= paths.Count) _selectedRow = 0;
-            return paths[_selectedRow];
+            int index = _selectedRow - (_eyeCareAction ? 1 : 0);
+            if (index < 0 || index >= paths.Count) return null;
+            return paths[index];
         }
 
         public static string FormatSize(long bytes)
@@ -1525,11 +1542,21 @@ if (_settingsOpen)
                 if (Theme.IsMinimal || _picked != null) ChooseFile();
                 e.Handled = true;
             }
-            else if (e.Key == Key.Enter && _picked != null)
+            else if (e.Key == Key.Enter)
             {
-                string path = SelectedPath();
-                if (path != null) BeginSend(path, _picked);
-                e.Handled = true;
+                if (_eyeCareAction && _selectedRow == 0)
+                {
+                    if (_search != null) _search.Text = "";
+                    OpenEyeCare();
+                    e.Handled = true;
+                    return;
+                }
+                if (_picked != null)
+                {
+                    string path = SelectedPath();
+                    if (path != null) BeginSend(path, _picked);
+                    e.Handled = true;
+                }
             }
             else if (e.Key == Key.Down && _resultList != null && _resultList.Children.Count > 0)
             {

@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -23,6 +24,9 @@ namespace Lazo
 
         private readonly DispatcherTimer _timer;
         private EyeCareAlertWindow _currentAlert;
+        private DateTime _microDueUtc;
+        private DateTime _activeDueUtc;
+        private string _statsDate;
 
         public int SecondsToMicroBreak { get; private set; }
         public int SecondsToActivePause { get; private set; }
@@ -38,11 +42,11 @@ namespace Lazo
 
         private EyeCareService()
         {
-            SecondsToMicroBreak = MicroBreakInterval;
-            SecondsToActivePause = ActivePauseInterval;
             SoundEnabled = true;
             ClockMode = EyeCareClockMode.Digital;
-
+            _statsDate = DateTime.Now.ToString("yyyy-MM-dd");
+            Arm(EyeCareBreakType.MicroBreak, MicroBreakInterval);
+            Arm(EyeCareBreakType.ActivePause, ActivePauseInterval);
             LoadSettings();
 
             _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
@@ -71,6 +75,7 @@ namespace Lazo
         {
             if (IsPaused == paused) return;
             IsPaused = paused;
+            if (!paused) TryShowDue();
             SaveSettings();
             if (StateChanged != null) StateChanged();
         }
@@ -85,42 +90,33 @@ namespace Lazo
 
         public void TriggerMicroBreak()
         {
-            SecondsToMicroBreak = MicroBreakInterval;
             ShowAlert(EyeCareBreakType.MicroBreak, MicroBreakDuration);
+            Arm(EyeCareBreakType.MicroBreak, MicroBreakInterval);
+            SaveSettings();
             if (StateChanged != null) StateChanged();
         }
 
         public void TriggerActivePause()
         {
-            SecondsToActivePause = ActivePauseInterval;
             ShowAlert(EyeCareBreakType.ActivePause, ActivePauseDuration);
+            Arm(EyeCareBreakType.ActivePause, ActivePauseInterval);
+            SaveSettings();
             if (StateChanged != null) StateChanged();
         }
 
         public void Snooze(EyeCareBreakType type, int seconds = 300)
         {
-            if (type == EyeCareBreakType.MicroBreak)
-                SecondsToMicroBreak = seconds;
-            else
-                SecondsToActivePause = seconds;
-
+            Arm(type, seconds);
             CloseCurrentAlert();
+            SaveSettings();
             if (StateChanged != null) StateChanged();
         }
 
         public void CompleteBreak(EyeCareBreakType type)
         {
-            if (type == EyeCareBreakType.MicroBreak)
-            {
-                MicroBreaksCompleted++;
-                SecondsToMicroBreak = MicroBreakInterval;
-            }
-            else
-            {
-                ActivePausesCompleted++;
-                SecondsToActivePause = ActivePauseInterval;
-            }
-
+            if (type == EyeCareBreakType.MicroBreak) MicroBreaksCompleted++;
+            else ActivePausesCompleted++;
+            Arm(type, type == EyeCareBreakType.MicroBreak ? MicroBreakInterval : ActivePauseInterval);
             SaveSettings();
             CloseCurrentAlert();
             if (StateChanged != null) StateChanged();
@@ -138,30 +134,82 @@ namespace Lazo
 
         private void OnTick()
         {
+            RollDay();
             TotalWorkSecondsToday++;
 
-            if (!IsPaused)
+            if (IsPaused)
             {
-                if (SecondsToMicroBreak > 0)
-                {
-                    SecondsToMicroBreak--;
-                    if (SecondsToMicroBreak == 0 && _currentAlert == null)
-                    {
-                        TriggerMicroBreak();
-                    }
-                }
-
-                if (SecondsToActivePause > 0)
-                {
-                    SecondsToActivePause--;
-                    if (SecondsToActivePause == 0 && _currentAlert == null)
-                    {
-                        TriggerActivePause();
-                    }
-                }
+                if (SecondsToMicroBreak > 0) _microDueUtc = _microDueUtc.AddSeconds(1);
+                if (SecondsToActivePause > 0) _activeDueUtc = _activeDueUtc.AddSeconds(1);
+            }
+            else
+            {
+                RefreshRemaining();
+                TryShowDue();
             }
 
+            if (TotalWorkSecondsToday % 60 == 0) SaveSettings();
             if (Ticked != null) Ticked();
+        }
+
+        private void RollDay()
+        {
+            string today = DateTime.Now.ToString("yyyy-MM-dd");
+            if (_statsDate == today) return;
+            _statsDate = today;
+            MicroBreaksCompleted = 0;
+            ActivePausesCompleted = 0;
+            TotalWorkSecondsToday = 0;
+            SaveSettings();
+        }
+
+        private void RefreshRemaining()
+        {
+            SecondsToMicroBreak = Remaining(_microDueUtc);
+            SecondsToActivePause = Remaining(_activeDueUtc);
+        }
+
+        private static int Remaining(DateTime dueUtc)
+        {
+            double seconds = (dueUtc - DateTime.UtcNow).TotalSeconds;
+            if (seconds <= 0) return 0;
+            return (int)Math.Ceiling(seconds);
+        }
+
+        private void Arm(EyeCareBreakType type, int seconds)
+        {
+            DateTime due = DateTime.UtcNow.AddSeconds(Math.Max(0, seconds));
+            if (type == EyeCareBreakType.MicroBreak)
+            {
+                _microDueUtc = due;
+                SecondsToMicroBreak = Math.Max(0, seconds);
+            }
+            else
+            {
+                _activeDueUtc = due;
+                SecondsToActivePause = Math.Max(0, seconds);
+            }
+        }
+
+        private void TryShowDue()
+        {
+            if (IsPaused || _currentAlert != null) return;
+            RefreshRemaining();
+            if (SecondsToMicroBreak <= 0)
+            {
+                ShowAlert(EyeCareBreakType.MicroBreak, MicroBreakDuration);
+                Arm(EyeCareBreakType.MicroBreak, MicroBreakInterval);
+                SaveSettings();
+                if (StateChanged != null) StateChanged();
+                return;
+            }
+            if (SecondsToActivePause <= 0)
+            {
+                ShowAlert(EyeCareBreakType.ActivePause, ActivePauseDuration);
+                Arm(EyeCareBreakType.ActivePause, ActivePauseInterval);
+                SaveSettings();
+                if (StateChanged != null) StateChanged();
+            }
         }
 
         private void ShowAlert(EyeCareBreakType type, int durationSeconds)
@@ -174,10 +222,15 @@ namespace Lazo
                 catch { }
             }
 
-            _currentAlert = new EyeCareAlertWindow(type, durationSeconds);
-            _currentAlert.Closed += (s, e) => { if (_currentAlert == s) _currentAlert = null; };
-            _currentAlert.Show();
-            WindowPlacement.PlaceBottomRight(_currentAlert, 0);
+            EyeCareAlertWindow alert = new EyeCareAlertWindow(type, durationSeconds);
+            _currentAlert = alert;
+            alert.Closed += (s, e) =>
+            {
+                if (_currentAlert == alert) _currentAlert = null;
+                if (!IsPaused) TryShowDue();
+            };
+            alert.Show();
+            WindowPlacement.PlaceBottomRight(alert, 0);
         }
 
         private static string SettingsPath()
@@ -195,6 +248,12 @@ namespace Lazo
                 string[] lines = File.ReadAllLines(path);
                 string today = DateTime.Now.ToString("yyyy-MM-dd");
                 string savedDate = "";
+                int microLeft = MicroBreakInterval;
+                int activeLeft = ActivePauseInterval;
+                bool hasMicroLeft = false;
+                bool hasActiveLeft = false;
+                DateTime savedUtc = DateTime.UtcNow;
+                bool hasSavedUtc = false;
 
                 foreach (string rawLine in lines)
                 {
@@ -232,15 +291,49 @@ namespace Lazo
                             int work;
                             if (int.TryParse(val, out work)) TotalWorkSecondsToday = work;
                             break;
+                        case "microleft":
+                            int microRemaining;
+                            if (int.TryParse(val, out microRemaining))
+                            {
+                                microLeft = microRemaining;
+                                hasMicroLeft = true;
+                            }
+                            break;
+                        case "activeleft":
+                            int activeRemaining;
+                            if (int.TryParse(val, out activeRemaining))
+                            {
+                                activeLeft = activeRemaining;
+                                hasActiveLeft = true;
+                            }
+                            break;
+                        case "savedutc":
+                            DateTime parsed;
+                            if (DateTime.TryParse(val, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out parsed))
+                            {
+                                savedUtc = parsed.ToUniversalTime();
+                                hasSavedUtc = true;
+                            }
+                            break;
                     }
                 }
 
+                _statsDate = string.IsNullOrEmpty(savedDate) ? today : savedDate;
                 if (savedDate != today)
                 {
                     MicroBreaksCompleted = 0;
                     ActivePausesCompleted = 0;
                     TotalWorkSecondsToday = 0;
+                    _statsDate = today;
                 }
+
+                int elapsed = 0;
+                if (!IsPaused && hasSavedUtc)
+                    elapsed = (int)Math.Max(0, (DateTime.UtcNow - savedUtc).TotalSeconds);
+                if (hasMicroLeft) SecondsToMicroBreak = Math.Max(0, microLeft - elapsed);
+                if (hasActiveLeft) SecondsToActivePause = Math.Max(0, activeLeft - elapsed);
+                _microDueUtc = DateTime.UtcNow.AddSeconds(SecondsToMicroBreak);
+                _activeDueUtc = DateTime.UtcNow.AddSeconds(SecondsToActivePause);
             }
             catch { }
         }
@@ -252,14 +345,18 @@ namespace Lazo
                 string path = SettingsPath();
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
                 string content = string.Format(
-                    "clock={0}\nsound={1}\npaused={2}\ndate={3}\nmicro={4}\nactive={5}\nwork={6}\n",
+                    CultureInfo.InvariantCulture,
+                    "clock={0}\nsound={1}\npaused={2}\ndate={3}\nmicro={4}\nactive={5}\nwork={6}\nmicroleft={7}\nactiveleft={8}\nsavedutc={9}\n",
                     ClockMode == EyeCareClockMode.Analog ? "analog" : "digital",
                     SoundEnabled,
                     IsPaused,
-                    DateTime.Now.ToString("yyyy-MM-dd"),
+                    _statsDate,
                     MicroBreaksCompleted,
                     ActivePausesCompleted,
-                    TotalWorkSecondsToday);
+                    TotalWorkSecondsToday,
+                    SecondsToMicroBreak,
+                    SecondsToActivePause,
+                    DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture));
                 File.WriteAllText(path, content);
             }
             catch { }
@@ -737,7 +834,7 @@ namespace Lazo
                 Margin = new Thickness(0, 0, 0, 8)
             };
             StackPanel workPanel = new StackPanel();
-            TextBlock workHeader = Theme.Text("Jornada: 8:00–12:00 · 13:00–17:30", 11, Theme.Ink, FontWeights.SemiBold);
+            TextBlock workHeader = Theme.Text("Hoy", 11, Theme.Ink, FontWeights.SemiBold);
             _statsText = Theme.Text("Pantalla: 0h 0m · 20-20-20: 0 · Pausas: 0", 10.5, Theme.Muted);
             _statsText.Margin = new Thickness(0, 3, 0, 0);
             workPanel.Children.Add(workHeader);
