@@ -54,6 +54,9 @@ namespace Lazo
         private bool _settingsOpen;
         private bool _historyOpen;
         private Border _historyCard;
+        private bool _eyeCareOpen;
+        private Border _eyeCareCard;
+        private EyeCareCardView _eyeCareView;
         private bool _holding;
         private DateTime _shownUtc;
         private System.Windows.Forms.Screen _launcherScreen = System.Windows.Forms.Screen.FromPoint(System.Windows.Forms.Cursor.Position);
@@ -153,6 +156,9 @@ namespace Lazo
                     SetStatus("Red no disponible: " + ex.Message);
                     RefreshDevices();
                 }
+                EyeCareService.Instance.Ticked += () => Dispatcher.BeginInvoke((Action)RefreshEyeCareCard);
+                EyeCareService.Instance.StateChanged += () => Dispatcher.BeginInvoke((Action)RefreshEyeCareCard);
+                EyeCareService.Instance.Start();
             }
         }
 
@@ -216,7 +222,7 @@ namespace Lazo
             Button gear = IconButton("\uE713", () =>
             {
                 _settingsOpen = !_settingsOpen;
-                if (_settingsOpen) _historyOpen = false;
+                if (_settingsOpen) { _historyOpen = false; _eyeCareOpen = false; }
                 SyncChrome();
             }, true);
             gear.HorizontalAlignment = HorizontalAlignment.Right;
@@ -231,7 +237,7 @@ namespace Lazo
             Button history = IconButton("\uE81C", () =>
             {
                 _historyOpen = !_historyOpen;
-                if (_historyOpen) _settingsOpen = false;
+                if (_historyOpen) { _settingsOpen = false; _eyeCareOpen = false; }
                 SyncChrome();
             }, true);
             history.HorizontalAlignment = HorizontalAlignment.Right;
@@ -246,6 +252,22 @@ namespace Lazo
             _historyCard.Visibility = _historyOpen ? Visibility.Visible : Visibility.Collapsed;
             _historyCard.MouseLeftButtonDown += (s, e) => e.Handled = true;
             overlay.Children.Add(_historyCard);
+            Button eyeCare = IconButton("\uE7B3", () =>
+            {
+                _eyeCareOpen = !_eyeCareOpen;
+                if (_eyeCareOpen) { _settingsOpen = false; _historyOpen = false; }
+                SyncChrome();
+            }, true);
+            eyeCare.HorizontalAlignment = HorizontalAlignment.Right;
+            eyeCare.VerticalAlignment = VerticalAlignment.Top;
+            eyeCare.Margin = new Thickness(0, 6, 104, 0);
+            eyeCare.ToolTip = "Descanso Visual";
+            Panel.SetZIndex(eyeCare, 2);
+            overlay.Children.Add(eyeCare);
+            _eyeCareCard = EyeCareCard();
+            _eyeCareCard.Visibility = _eyeCareOpen ? Visibility.Visible : Visibility.Collapsed;
+            _eyeCareCard.MouseLeftButtonDown += (s, e) => e.Handled = true;
+            overlay.Children.Add(_eyeCareCard);
             _progressScale = new ScaleTransform(0, 1);
             Border progress = new Border
             {
@@ -275,7 +297,7 @@ namespace Lazo
             _resultsRow = new RowDefinition { Height = showResults ? new GridLength(1, GridUnitType.Star) : new GridLength(0) };
             layout.RowDefinitions.Add(_resultsRow);
 
-            Grid heading = new Grid { Margin = new Thickness(16, 7, 108, 0) };
+            Grid heading = new Grid { Margin = new Thickness(16, 7, 140, 0) };
             heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) });
             heading.ColumnDefinitions.Add(new ColumnDefinition());
             TextBlock wordmark = Theme.Text("L A Z O", 10, Theme.Muted, FontWeights.SemiBold);
@@ -342,7 +364,7 @@ namespace Lazo
             layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(36) });
 
-            Grid header = new Grid { Margin = new Thickness(10, 0, 76, 0) };
+            Grid header = new Grid { Margin = new Thickness(10, 0, 140, 0) };
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             header.ColumnDefinitions.Add(new ColumnDefinition());
@@ -717,10 +739,27 @@ namespace Lazo
             SyncChrome();
         }
 
+        private void OpenEyeCare()
+        {
+            _eyeCareOpen = true;
+            _settingsOpen = false;
+            _historyOpen = false;
+            SyncChrome();
+        }
+
+        private void CloseEyeCare()
+        {
+            if (!_eyeCareOpen) return;
+            _eyeCareOpen = false;
+            SyncChrome();
+        }
+
         private void OpenSearch(Peer peer)
         {
             _picked = peer;
             _settingsOpen = false;
+            _historyOpen = false;
+            _eyeCareOpen = false;
             _manualFiles.Clear();
             _results.Clear();
             _selectedRow = 0;
@@ -754,6 +793,11 @@ namespace Lazo
             {
                 if (_historyOpen) _historyCard.Child = HistoryList();
                 _historyCard.Visibility = _historyOpen ? Visibility.Visible : Visibility.Collapsed;
+            }
+            if (_eyeCareCard != null)
+            {
+                if (_eyeCareOpen && _eyeCareView != null) _eyeCareView.UpdateUi();
+                _eyeCareCard.Visibility = _eyeCareOpen ? Visibility.Visible : Visibility.Collapsed;
             }
             if (_resultsRow != null && Theme.IsMinimal)
                 _resultsRow.Height = HasResults() ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
@@ -832,11 +876,55 @@ if (_settingsOpen)
         {
             if (_resultList == null) return;
             _resultList.Children.Clear();
+            bool hasEyeAction = false;
+            if (_search != null && !string.IsNullOrEmpty(_search.Text))
+            {
+                string q = _search.Text.Trim().ToLowerInvariant();
+                if (q.Contains("descanso") || q.Contains("ojo") || q.Contains("pausa") || q.Contains("reloj"))
+                {
+                    _resultList.Children.Add(EyeCareActionRow());
+                    hasEyeAction = true;
+                }
+            }
             List<string> paths = _search == null || _search.Text.Trim().Length == 0
                 ? _manualFiles.ToList()
                 : _results.ToList();
             for (int i = 0; i < paths.Count; i++) _resultList.Children.Add(FileRow(paths[i], i));
-            if (_empty != null) _empty.Visibility = paths.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            if (_empty != null) _empty.Visibility = (paths.Count == 0 && !hasEyeAction) ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private Border EyeCareActionRow()
+        {
+            Border row = new Border
+            {
+                Background = Theme.SoftSurface,
+                BorderBrush = Theme.Line,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(10, 8, 10, 8),
+                Margin = new Thickness(4, 2, 4, 4),
+                Cursor = Cursors.Hand
+            };
+            Grid g = new Grid();
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
+            g.ColumnDefinitions.Add(new ColumnDefinition());
+            TextBlock icon = Theme.Text("\uE7B3", 14, Theme.Ink, FontWeights.SemiBold);
+            icon.FontFamily = new FontFamily("Segoe MDL2 Assets");
+            icon.VerticalAlignment = VerticalAlignment.Center;
+            g.Children.Add(icon);
+            StackPanel sp = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            sp.Children.Add(Theme.Text("Abrir Descanso Visual", 12, Theme.Ink, FontWeights.SemiBold));
+            sp.Children.Add(Theme.Text("Regla 20-20-20, Pausas activas y relojes", 10.5, Theme.Muted));
+            Grid.SetColumn(sp, 1);
+            g.Children.Add(sp);
+            row.Child = g;
+            row.MouseLeftButtonDown += (s, e) =>
+            {
+                e.Handled = true;
+                if (_search != null) _search.Text = "";
+                OpenEyeCare();
+            };
+            return row;
         }
 
         private Border FileRow(string path, int index)
@@ -1126,6 +1214,39 @@ if (_settingsOpen)
             };
         }
 
+        private void RefreshEyeCareCard()
+        {
+            if (_eyeCareOpen && _eyeCareView != null)
+            {
+                _eyeCareView.UpdateUi();
+            }
+        }
+
+        private Border EyeCareCard()
+        {
+            _eyeCareView = new EyeCareCardView();
+            ScrollViewer scroll = new ScrollViewer
+            {
+                Content = _eyeCareView,
+                MaxHeight = 490,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+            };
+            return new Border
+            {
+                Background = Theme.CardSurface,
+                BorderBrush = Theme.Line,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(12, 10, 12, 10),
+                Width = 320,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 40, 8, 0),
+                Child = scroll
+            };
+        }
+
         private UIElement HistoryList()
         {
             StackPanel panel = new StackPanel();
@@ -1375,6 +1496,27 @@ if (_settingsOpen)
         {
             if (e.Key == Key.Escape)
             {
+                if (_eyeCareOpen)
+                {
+                    _eyeCareOpen = false;
+                    SyncChrome();
+                    e.Handled = true;
+                    return;
+                }
+                if (_historyOpen)
+                {
+                    _historyOpen = false;
+                    SyncChrome();
+                    e.Handled = true;
+                    return;
+                }
+                if (_settingsOpen)
+                {
+                    _settingsOpen = false;
+                    SyncChrome();
+                    e.Handled = true;
+                    return;
+                }
                 HideAnimated();
                 e.Handled = true;
             }
@@ -1453,6 +1595,7 @@ if (_settingsOpen)
         {
             _settingsOpen = false;
             _historyOpen = false;
+            _eyeCareOpen = false;
             _picked = null;
             _manualFiles.Clear();
             _results.Clear();
@@ -1482,6 +1625,11 @@ if (_settingsOpen)
             _tray.DoubleClick += (s, e) => Dispatcher.BeginInvoke((Action)ShowAnimated);
             System.Windows.Forms.ContextMenuStrip menu = new System.Windows.Forms.ContextMenuStrip();
             menu.Items.Add("Abrir Lazo", null, (s, e) => Dispatcher.BeginInvoke((Action)ShowAnimated));
+            menu.Items.Add("Descanso Visual", null, (s, e) => Dispatcher.BeginInvoke((Action)(() => { ShowAnimated(); OpenEyeCare(); })));
+            menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
+            menu.Items.Add("Micro-descanso ahora (20s)", null, (s, e) => Dispatcher.BeginInvoke((Action)(() => EyeCareService.Instance.TriggerMicroBreak())));
+            menu.Items.Add("Pausa activa ahora (5m)", null, (s, e) => Dispatcher.BeginInvoke((Action)(() => EyeCareService.Instance.TriggerActivePause())));
+            menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
             menu.Items.Add("Salir", null, (s, e) => Dispatcher.BeginInvoke((Action)(() => { _exiting = true; Close(); Application.Current.Shutdown(); })));
             _tray.ContextMenuStrip = menu;
         }
@@ -1491,6 +1639,18 @@ if (_settingsOpen)
             if (_settingsOpen)
             {
                 CloseSettings();
+                return;
+            }
+            if (_historyOpen)
+            {
+                _historyOpen = false;
+                SyncChrome();
+                return;
+            }
+            if (_eyeCareOpen)
+            {
+                _eyeCareOpen = false;
+                SyncChrome();
                 return;
             }
             if (IsInteractive(e.OriginalSource as DependencyObject)) return;
